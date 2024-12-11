@@ -50,7 +50,7 @@ class CryptoMonitor:
             'button_bg': '#e0e0e0',  # 按钮背景色
             'button_fg': '#000000'   # 按钮前景色
         }
-        
+        self.is_model_trained = False
         # 初始化当前主题
         self.current_theme = tk.StringVar(value='VSCode')
         self.colors = self.vscode_theme if self.current_theme.get() == 'VSCode' else self.default_theme
@@ -101,6 +101,8 @@ class CryptoMonitor:
         self.running = False
         self.recent_signals = []
         self.use_ml_model = tk.BooleanVar(value=False)  # 默认启用机器学习模型
+        self.start_date = tk.StringVar(value='2023-01-01')  # 默认开始日期
+        self.end_date = tk.StringVar(value='2023-12-31')    # 默认结束日期
         
         # 加载设置
         self.load_settings()
@@ -120,6 +122,7 @@ class CryptoMonitor:
         
         # 初始化数据
         self.exchange = ccxt.binance()  # 例如，使用 Binance 交易所
+        self.load_model()
         
         # 添加醒目的按钮样式
         self.style.configure('Accent.TButton',
@@ -136,7 +139,7 @@ class CryptoMonitor:
         
         # 初始化随机森林模型
         self.model = RandomForestClassifier(n_estimators=100, random_state=42)
-        self.is_model_trained = False
+        
     
     def load_config_without_display(self):
         """从文件加载配置，但不更新显示"""
@@ -653,7 +656,7 @@ class CryptoMonitor:
         """触发信号提醒"""
         # 检查信号是否在5分钟内重复
         last_time = self.last_signal_times.get(signal_name, 0)
-        if current_time - last_time >= 300:  # 300��� = 5分钟
+        if current_time - last_time >= 300:  # 300秒 = 5分钟
             self.last_signal_times[signal_name] = current_time
             
             # 添加新信号
@@ -667,9 +670,6 @@ class CryptoMonitor:
             
             # 更新信号显示
             self.update_signal_display()
-            
-            # 保存配置
-            self.save_config()
             
             # 结合信号评分建议买入或卖出金额
             trade_amount = self.trade_amount.get()
@@ -1138,7 +1138,7 @@ class CryptoMonitor:
             print(f"形态检查错误: {str(e)}")
 
     def is_head_and_shoulders_top(self, prices, threshold=0.02, min_distance=5):
-        """改进的头肩顶形态检测"""
+        """改进的头肩顶形��检测"""
         if len(prices) < 50:
             return False
         
@@ -1224,7 +1224,7 @@ class CryptoMonitor:
         if len(valleys) < 3:
             return False
         
-        # 检查最后三个谷值是否符合头肩底形态
+        # 检查最后三个��值是否符合头肩底形态
         last_valleys = valleys[-3:]
         if len(last_valleys) == 3:
             left_shoulder, head, right_shoulder = last_valleys
@@ -1513,7 +1513,7 @@ class CryptoMonitor:
             return []
 
     def analyze_trend(self, df):
-        """分析单一时间框架的趋势"""
+        """��析单一时间框架的趋势"""
         try:
             closes = df['close'].values
             
@@ -1644,12 +1644,26 @@ class CryptoMonitor:
             if self.use_ml_model.get():
                 # 使用机器学习模型检查信号
                 predictions = self.predict_market_behavior(df)
+                bullish_signals = []
+                bearish_signals = []
+                
                 if predictions is not None:
                     for i, prediction in enumerate(predictions):
                         if prediction == 1:
-                            self.trigger_signal(f'预测看涨信号在索引 {i}', time.time())
-                        else:
-                            self.trigger_signal(f'预测看跌信号在索引 {i}', time.time())
+                            bullish_signals.append('预测看涨信号')
+                        elif prediction == 0:
+                            bearish_signals.append('预测看跌信号')
+                
+                # 处理同时存在看涨和看跌信号的情况
+                if bullish_signals and bearish_signals:
+                    # 可以选择不触发信号，或者触发一个中性信号
+                    print("同时存在看涨和看跌信号，选择不触发信号")
+                elif bullish_signals:
+                    for signal in bullish_signals:
+                        self.trigger_signal(signal, time.time())
+                elif bearish_signals:
+                    for signal in bearish_signals:
+                        self.trigger_signal(signal, time.time())
             else:
                 # 使用其他方法检查信号
                 self.check_patterns(df)
@@ -1658,14 +1672,20 @@ class CryptoMonitor:
         except Exception as e:
             print(f"信号检查错误: {str(e)}")
 
-    def fetch_ohlcv_data(self, symbol, timeframe):
+    def fetch_ohlcv_data(self, symbol, timeframe, start_date=None, end_date=None):
         """获取OHLCV数据"""
         try:
             # 使用ccxt库从交易所获取数据
-            ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe)
-            # 将数据转换为DataFrame
+            since = int(pd.to_datetime(start_date).timestamp() * 1000) if start_date else None
+            until = int(pd.to_datetime(end_date).timestamp() * 1000) if end_date else None
+            
+            ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, since=since)
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            
+            if until:
+                df = df[df['timestamp'] <= pd.to_datetime(end_date)]
+            
             return df
         except Exception as e:
             print(f"获取OHLCV数据错误: {str(e)}")
@@ -1861,6 +1881,9 @@ class CryptoMonitor:
         self.model.fit(features, labels)
         self.is_model_trained = True
         print("模型训练完成")
+        # 保存模型
+        with open('model.pkl', 'wb') as f:
+            pickle.dump(self.model, f)
 
     def predict_market_behavior(self, df):
         """使用模型预测市场行为"""
@@ -1949,73 +1972,55 @@ class CryptoMonitor:
             print("无法加载数据进行训练")
 
     def show_training_window(self):
-        """显示训练窗口"""
+        """显示训练模型窗口"""
+        # 创建训练窗口
         training_window = tk.Toplevel(self.root)
         training_window.title('训练模型')
-        training_window.geometry('400x300')
+        training_window.geometry('300x300')
         training_window.transient(self.root)
         training_window.grab_set()
         
-        # 交易对选择
-        symbol_label = ttk.Label(training_window, text='交易对:')
-        symbol_label.pack(pady=5)
-        symbol_combobox = ttk.Combobox(training_window, values=self.get_available_symbols())
-        symbol_combobox.pack(pady=5)
+        # 使用当前主题
+        training_window.configure(bg=self.colors['bg'])
         
-        # 时间框架选择
-        timeframe_label = ttk.Label(training_window, text='时间框架:')
-        timeframe_label.pack(pady=5)
-        timeframe_combobox = ttk.Combobox(training_window, values=['1m', '5m', '15m', '1h', '4h', '1d', '1w'])
-        timeframe_combobox.pack(pady=5)
+        # 添加日期选择
+        ttk.Label(training_window, text='开始日期:').pack(pady=5)
+        DateEntry(training_window, textvariable=self.start_date, date_pattern='yyyy-mm-dd').pack(pady=5)
         
-        # 开始时间选择
-        since_label = ttk.Label(training_window, text='开始时间:')
-        since_label.pack(pady=5)
-        since_entry = DateEntry(training_window, width=12, background='darkblue',
-                            foreground='white', borderwidth=2, year=2023)
-        since_entry.pack(pady=5)
+        ttk.Label(training_window, text='结束日期:').pack(pady=5)
+        DateEntry(training_window, textvariable=self.end_date, date_pattern='yyyy-mm-dd').pack(pady=5)
         
-        # 保存文件名
-        filename_label = ttk.Label(training_window, text='保存文件名:')
-        filename_label.pack(pady=5)
-        filename_entry = ttk.Entry(training_window)
-        filename_entry.pack(pady=5)
+        # 添加训练按钮
+        train_button = ttk.Button(training_window, text='开始训练', command=self.start_training)
+        train_button.pack(pady=20)
         
-        # 抓取并训练按钮
-        fetch_button = ttk.Button(training_window, text='抓取并训练',
-                              command=lambda: self.fetch_and_train(
-                                  symbol_combobox.get(), timeframe_combobox.get(), since_entry.get_date(), filename_entry.get()))
-        fetch_button.pack(pady=10)
-        
-        # 从文件训练按钮
-        train_button = ttk.Button(training_window, text='从文件训练',
-                              command=lambda: self.train_model_from_file(filename_entry.get()))
-        train_button.pack(pady=10)
+        # 添加关闭按钮
+        close_button = ttk.Button(training_window, text='关闭', command=training_window.destroy)
+        close_button.pack(pady=10)
 
-    def fetch_and_train(self, symbol, timeframe, since, filename):
-        """抓取数据并训练模型"""
-        since_timestamp = int(since.timestamp() * 1000)  # 转换为时间戳
-        self.fetch_and_save_historical_data(symbol, timeframe, since_timestamp, filename)
-        df = self.load_historical_data(filename)
-        if df is not None:
+    def start_training(self):
+        """开始训练模型"""
+        # 获取用户选择的日期范围
+        start_date = self.start_date.get()
+        end_date = self.end_date.get()
+        
+        # 获取历史数据
+        df = self.fetch_ohlcv_data(self.symbol_var.get(), '1h', start_date, end_date)
+        print(len(df))
+        if df is not None and len(df) > 50:
             self.train_model(df)
-            self.save_model(filename.replace('.csv', '.pkl'))  # 保存模型
+        else:
+            print("数据不足，无法训练模型")
 
-    def save_model(self, filename):
-        """保存训练好的模型"""
-        with open(filename, 'wb') as f:
-            pickle.dump(self.model, f)
-        print(f"模型已保存到 {filename}")
-
-    def load_model(self, filename):
-        """加载已保存的模型"""
+    def load_model(self):
+        """加载模型"""
         try:
-            with open(filename, 'rb') as f:
+            with open('model.pkl', 'rb') as f:
                 self.model = pickle.load(f)
             self.is_model_trained = True
-            print(f"模型已从 {filename} 加载")
-        except Exception as e:
-            print(f"加载模型错误: {str(e)}")
+            print("模型加载完成")
+        except FileNotFoundError:
+            print("模型文件未找到，请先训练模型")
 
     def get_available_symbols(self):
         """获取可用的交易对列表"""
