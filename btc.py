@@ -492,7 +492,7 @@ class CryptoMonitor:
             command=self.start_monitoring, style='Accent.TButton')
         self.start_btn.pack(pady=5, padx=2, fill=tk.X)
         
-        # 添加支撑位和压力��显示
+        # 添加支撑位和压力����显示
         levels_frame = ttk.LabelFrame(control_frame, text='支撑位/压力位', padding=2)
         levels_frame.pack(pady=2, padx=2, fill=tk.X)
         
@@ -547,7 +547,7 @@ class CryptoMonitor:
             # 获取当前交易对
             symbol = self.symbol_var.get()
             
-            # 执行多时间框架分析
+            # 执行����间框架分析
             multi_tf_signals = self.analyze_multiple_timeframes(symbol)
             
             # 触发信号
@@ -711,7 +711,7 @@ class CryptoMonitor:
                 prev_price = df['close'].iloc[-2]
                 
                 if prev_price <= ma20.iloc[-2] and price > ma20.iloc[-1]:
-                    self.trigger_signal('向上突破20日均线', current_time)
+                    self.trigger_signal('向��突破20日均线', current_time)
                 elif prev_price >= ma20.iloc[-2] and price < ma20.iloc[-1]:
                     self.trigger_signal('向下突破20日均线', current_time)
             
@@ -767,7 +767,8 @@ class CryptoMonitor:
             # 结合信号评分建议买入或卖出金额
             trade_amount = self.trade_amount.get()
             message = f'{self.symbol_var.get()} {signal_name}！建议交易金额: {trade_amount} USDT'
-            self.root.after(0, lambda: messagebox.showinfo('信号提醒', message))
+            print(f'信号提醒: {message}')
+            # self.root.after(0, lambda: messagebox.showinfo('信号提醒', message))
     
     def update_signal_display(self):
         """更新最近信号显示"""
@@ -908,7 +909,7 @@ class CryptoMonitor:
                 self.root.after(0, lambda: messagebox.showerror("错误", f"获取数据失败: {str(e)}\n请检查网络和代理设置"))
                 self.running = False
                 self.root.after(0, lambda: self.start_btn.config(text='启动监控'))
-                time.sleep(5)  # 出错后等待5秒重试
+                time.sleep(5)  # 出�����后等待5秒重试
     
     def start_monitoring(self):
         """启动监控前先测试连接"""
@@ -2046,7 +2047,7 @@ class CryptoMonitor:
             print(f"技术指标检查错误: {str(e)}")
 
     def fetch_and_save_historical_data(self, symbol, timeframe, since, filename):
-        """抓取并保存历史数据"""
+        """抓取�����保存历史数据"""
         try:
             # 使用ccxt库从交易所获取数据
             ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, since=since)
@@ -2144,7 +2145,7 @@ class CryptoMonitor:
         结合短期、中期、长期走势分析
         """
         try:
-            # 定义时间框架组合
+            # 定义时间框架组���
             timeframes = {
                 'short': ['1m', '5m', '15m'],     # 短期
                 'medium': ['30m', '1h', '4h'],    # 中期
@@ -2322,7 +2323,7 @@ class CryptoMonitor:
             
         # 创建预测结果窗口
         pred_window = tk.Toplevel(self.root)
-        pred_window.title('多时间维度交易预测分析')
+        pred_window.title('多维度交易预测��')
         pred_window.geometry('600x800')
         
         # 使用当前主题
