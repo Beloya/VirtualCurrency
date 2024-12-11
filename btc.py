@@ -554,58 +554,50 @@ class CryptoMonitor:
             for signal, timestamp in multi_tf_signals:
                 self.trigger_signal(signal, timestamp)
             
-            if self.use_ml_model.get():
+            if self.use_ml_model.get() and self.is_model_trained:
                 # 使用机器学习模型检查信号
                 predictions = self.predict_market_behavior(df)
-                bullish_signals = []
-                bearish_signals = []
-                
                 if predictions is not None:
                     for i, prediction in enumerate(predictions):
                         if prediction == 1:
-                            bullish_signals.append('预测看涨信号')
+                            self.trigger_signal('ML模型预测看涨信号', time.time())
                         elif prediction == 0:
-                            bearish_signals.append('预测看跌信号')
-                
-                # 处理同时存在看涨和看跌信号的情况
-                if bullish_signals and bearish_signals:
-                    # 可以选择不触发信号，或者触发一个中性信号
-                    print("同时存在看涨和看跌信号，选择不触发信号")
-                    for signal in bullish_signals:
-                        self.trigger_signal(signal, time.time())
-                    for signal in bearish_signals:
-                        self.trigger_signal(signal, time.time())
-                elif bullish_signals:
-                    for signal in bullish_signals:
-                        self.trigger_signal(signal, time.time())
-                elif bearish_signals:
-                    for signal in bearish_signals:
-                        self.trigger_signal(signal, time.time())
+                            self.trigger_signal('ML模型预测看跌信号', time.time())
+            
+            # 执行预测分析但只在满足阈值时显示
+            prediction = self.predict_best_entry_exit_multi_timeframe(symbol)
+            if prediction and prediction['signal'] != '观望':  # 只在有明确信号时检查
+                try:
+                    threshold = float(self.prediction_threshold.get())
+                    if prediction['confidence'] >= threshold:
+                        # 检查是否已经触发过相同信号
+                        current_time = time.time()
+                        signal_key = f"{prediction['signal']}_{prediction['confidence']}"
+                        
+                        # 如果该信号在最近30分钟内没有触发过
+                        if (signal_key not in self.last_signal_times or 
+                            current_time - self.last_signal_times.get(signal_key, 0) > 1800):
+                            
+                            # 更新最后触发时间
+                            self.last_signal_times[signal_key] = current_time
+                            
+                            # 添加时间戳到信号
+                            signal_time = datetime.now().strftime('%H:%M:%S')
+                            signal_text = f"[{signal_time}] {prediction['signal']} "
+                            signal_text += f"(信心度: {prediction['confidence']}%)"
+                            
+                            # 触发信号
+                            self.trigger_signal(signal_text, current_time)
+                            
+                            # 显示预测窗口
+                            self.root.after(0, lambda: self.display_multi_timeframe_prediction(prediction))
+                except ValueError:
+                    print("预警阈值设置无效")
             
             # 使用其他方法检查信号
             self.check_patterns(df)
             self.check_indicators(df)
-            prediction = self.predict_best_entry_exit(df)
-            if prediction:
-              self.root.after(0, lambda: self.display_prediction(prediction))
             
-            # 获取当前交易对
-            symbol = self.symbol_var.get()
-            
-            # 执行预测分析但只在满足阈值时显示
-            prediction = self.predict_best_entry_exit_multi_timeframe(symbol)
-            if prediction:
-                threshold = float(self.prediction_threshold.get())
-                if prediction['confidence'] >= threshold:
-                    # 添加到信号列表
-                    signal_text = (f"{prediction['signal']} "
-                                 f"信心指数:{prediction['confidence']}% "
-                                 f"风险:{prediction['risk_level']}")
-                    self.trigger_signal(signal_text, time.time())
-                    
-                    # 显示预测窗口
-                    self.root.after(0, lambda: self.display_multi_timeframe_prediction(prediction))
-        
         except Exception as e:
             print(f"信号检查错误: {str(e)}")
             import traceback
@@ -1742,58 +1734,50 @@ class CryptoMonitor:
             for signal, timestamp in multi_tf_signals:
                 self.trigger_signal(signal, timestamp)
             
-            if self.use_ml_model.get():
+            if self.use_ml_model.get() and self.is_model_trained:
                 # 使用机器学习模型检查信号
                 predictions = self.predict_market_behavior(df)
-                bullish_signals = []
-                bearish_signals = []
-                
                 if predictions is not None:
                     for i, prediction in enumerate(predictions):
                         if prediction == 1:
-                            bullish_signals.append('预测看涨信号')
+                            self.trigger_signal('ML模型预测看涨信号', time.time())
                         elif prediction == 0:
-                            bearish_signals.append('预测看跌信号')
-                
-                # 处理同时存在看涨和看跌信号的情况
-                if bullish_signals and bearish_signals:
-                    # 可以选择不触发信号，或者触发一个中性信号
-                    print("同时存在看涨和看跌信号，选择不触发信号")
-                    for signal in bullish_signals:
-                        self.trigger_signal(signal, time.time())
-                    for signal in bearish_signals:
-                        self.trigger_signal(signal, time.time())
-                elif bullish_signals:
-                    for signal in bullish_signals:
-                        self.trigger_signal(signal, time.time())
-                elif bearish_signals:
-                    for signal in bearish_signals:
-                        self.trigger_signal(signal, time.time())
+                            self.trigger_signal('ML模型预测看跌信号', time.time())
+            
+            # 执行预测分析但只在满足阈值时显示
+            prediction = self.predict_best_entry_exit_multi_timeframe(symbol)
+            if prediction and prediction['signal'] != '观望':  # 只在有明确信号时检查
+                try:
+                    threshold = float(self.prediction_threshold.get())
+                    if prediction['confidence'] >= threshold:
+                        # 检查是否已经触发过相同信号
+                        current_time = time.time()
+                        signal_key = f"{prediction['signal']}_{prediction['confidence']}"
+                        
+                        # 如果该信号在最近30分钟内没有触发过
+                        if (signal_key not in self.last_signal_times or 
+                            current_time - self.last_signal_times.get(signal_key, 0) > 1800):
+                            
+                            # 更新最后触发时间
+                            self.last_signal_times[signal_key] = current_time
+                            
+                            # 添加时间戳到信号
+                            signal_time = datetime.now().strftime('%H:%M:%S')
+                            signal_text = f"[{signal_time}] {prediction['signal']} "
+                            signal_text += f"(信心度: {prediction['confidence']}%)"
+                            
+                            # 触发信号
+                            self.trigger_signal(signal_text, current_time)
+                            
+                            # 显示预测窗口
+                            self.root.after(0, lambda: self.display_multi_timeframe_prediction(prediction))
+                except ValueError:
+                    print("预警阈值设置无效")
             
             # 使用其他方法检查信号
             self.check_patterns(df)
             self.check_indicators(df)
-            prediction = self.predict_best_entry_exit_multi_timeframe(symbol)
-            if prediction:
-              self.root.after(0, lambda: self.display_multi_timeframe_prediction(prediction))
             
-            # 获取当前交易对
-            symbol = self.symbol_var.get()
-            
-            # 执行预测分析但只在满足阈值时显示
-            prediction = self.predict_best_entry_exit_multi_timeframe(symbol)
-            if prediction:
-                threshold = float(self.prediction_threshold.get())
-                if prediction['confidence'] >= threshold:
-                    # 添加到信号列表
-                    signal_text = (f"{prediction['signal']} "
-                                 f"信心指数:{prediction['confidence']}% "
-                                 f"风险:{prediction['risk_level']}")
-                    self.trigger_signal(signal_text, time.time())
-                    
-                    # 显示预测窗口
-                    self.root.after(0, lambda: self.display_multi_timeframe_prediction(prediction))
-        
         except Exception as e:
             print(f"信号检查错误: {str(e)}")
             import traceback
