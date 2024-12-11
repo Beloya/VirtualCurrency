@@ -257,6 +257,7 @@ class CryptoMonitor:
             'recent_signals': self.recent_signals,
             'theme': self.current_theme.get(),
             'trade_amount': self.trade_amount.get(),  # 保存交易金额
+            'prediction_threshold': self.prediction_threshold.get(),  # 保存预测阈值
         })
         with open(self.config_file, 'w', encoding='utf-8') as f:
             json.dump(self.config, f, ensure_ascii=False)
@@ -491,7 +492,7 @@ class CryptoMonitor:
             command=self.start_monitoring, style='Accent.TButton')
         self.start_btn.pack(pady=5, padx=2, fill=tk.X)
         
-        # 添加支撑位和压力位显示
+        # 添加支撑位和压力��显示
         levels_frame = ttk.LabelFrame(control_frame, text='支撑位/压力位', padding=2)
         levels_frame.pack(pady=2, padx=2, fill=tk.X)
         
@@ -510,6 +511,106 @@ class CryptoMonitor:
         ttk.Label(fund_management_frame, text='交易金额:').pack(side=tk.LEFT, padx=2)
         ttk.Entry(fund_management_frame, textvariable=self.trade_amount, width=10).pack(side=tk.LEFT, padx=2)
     
+        # 添加预测分析按钮框架
+        prediction_frame = ttk.LabelFrame(control_frame, text='预测分析', padding=2)
+        prediction_frame.pack(pady=2, padx=2, fill=tk.X)
+        
+        # 添加手动预测按钮
+        predict_btn = ttk.Button(prediction_frame, text='分析交易机会', 
+            command=self.manual_predict, style='Accent.TButton')
+        predict_btn.pack(pady=5, padx=2, fill=tk.X)
+        
+        # 添加自动预测阈值设置
+        threshold_frame = ttk.Frame(prediction_frame)
+        threshold_frame.pack(fill=tk.X, padx=2)
+        
+        ttk.Label(threshold_frame, text='预警阈值:').pack(side=tk.LEFT, padx=2)
+        self.prediction_threshold = ttk.Entry(threshold_frame, width=8)
+        self.prediction_threshold.insert(0, '80')  # 默认阈值80%
+        self.prediction_threshold.pack(side=tk.LEFT, padx=2)
+        ttk.Label(threshold_frame, text='%').pack(side=tk.LEFT)
+    
+    def manual_predict(self):
+        """手动触发预测分析"""
+        try:
+            symbol = self.symbol_var.get()
+            prediction = self.predict_best_entry_exit_multi_timeframe(symbol)
+            if prediction:
+                self.display_multi_timeframe_prediction(prediction)
+        except Exception as e:
+            print(f"手动预测错误: {str(e)}")
+            messagebox.showerror("错误", f"预测分析失败: {str(e)}")
+
+    def check_signals(self, df):
+        """检查信号"""
+        try:
+            # 获取当前交易对
+            symbol = self.symbol_var.get()
+            
+            # 执行多时间框架分析
+            multi_tf_signals = self.analyze_multiple_timeframes(symbol)
+            
+            # 触发信号
+            for signal, timestamp in multi_tf_signals:
+                self.trigger_signal(signal, timestamp)
+            
+            if self.use_ml_model.get():
+                # 使用机器学习模型检查信号
+                predictions = self.predict_market_behavior(df)
+                bullish_signals = []
+                bearish_signals = []
+                
+                if predictions is not None:
+                    for i, prediction in enumerate(predictions):
+                        if prediction == 1:
+                            bullish_signals.append('预测看涨信号')
+                        elif prediction == 0:
+                            bearish_signals.append('预测看跌信号')
+                
+                # 处理同时存在看涨和看跌信号的情况
+                if bullish_signals and bearish_signals:
+                    # 可以选择不触发信号，或者触发一个中性信号
+                    print("同时存在看涨和看跌信号，选择不触发信号")
+                    for signal in bullish_signals:
+                        self.trigger_signal(signal, time.time())
+                    for signal in bearish_signals:
+                        self.trigger_signal(signal, time.time())
+                elif bullish_signals:
+                    for signal in bullish_signals:
+                        self.trigger_signal(signal, time.time())
+                elif bearish_signals:
+                    for signal in bearish_signals:
+                        self.trigger_signal(signal, time.time())
+            
+            # 使用其他方法检查信号
+            self.check_patterns(df)
+            self.check_indicators(df)
+            prediction = self.predict_best_entry_exit(df)
+            if prediction:
+              self.root.after(0, lambda: self.display_prediction(prediction))
+            
+            # 获取当前交易对
+            symbol = self.symbol_var.get()
+            
+            # 执行预测分析但只在满足阈值时显示
+            prediction = self.predict_best_entry_exit_multi_timeframe(symbol)
+            if prediction:
+                threshold = float(self.prediction_threshold.get())
+                if prediction['confidence'] >= threshold:
+                    # 添加到信号列表
+                    signal_text = (f"{prediction['signal']} "
+                                 f"信心指数:{prediction['confidence']}% "
+                                 f"风险:{prediction['risk_level']}")
+                    self.trigger_signal(signal_text, time.time())
+                    
+                    # 显示预测窗口
+                    self.root.after(0, lambda: self.display_multi_timeframe_prediction(prediction))
+        
+        except Exception as e:
+            print(f"信号检查错误: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
     def apply_theme(self):
         """应用当前主题"""
         self.colors = self.vscode_theme if self.current_theme.get() == 'VSCode' else self.default_theme
@@ -593,7 +694,7 @@ class CryptoMonitor:
                 old_price = df.loc[df.index >= minutes_ago].iloc[0]['close']
                 current_price = df['close'].iloc[-1]
                 
-                # ���价格变动百分
+                # 价格变动百分
                 price_change = ((current_price - old_price) / old_price) * 100
                 
                 if abs(price_change) >= threshold:
@@ -750,7 +851,7 @@ class CryptoMonitor:
         ax1.tick_params(labelbottom=False)  # 隐藏上面两个图的x轴标签
         ax2.tick_params(labelbottom=False)  # 隐藏间的x轴标签
         
-        # 调整时间轴��式
+        # 调整时间轴式
         ax3.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%H:%M'))
         
         # 设置图例
@@ -838,7 +939,7 @@ class CryptoMonitor:
         print("监控已停止")
     
     def run(self):
-        """运行程��"""
+        """运行程"""
         try:
             self.root.mainloop()
         except Exception as e:
@@ -1050,7 +1151,7 @@ class CryptoMonitor:
   * >2倍：+30分
   * >1.5倍：+20分
   * >1倍：+10分
-- 3日成交量均值上升：+20分
+- 3日成��量均值上升：+20分
 - 基础分：50分
 
 5. 技术指标评分 (权重20%)
@@ -1466,7 +1567,7 @@ class CryptoMonitor:
         """清空最近信号"""
         self.recent_signals.clear()
         self.update_signal_display()
-        self.save_config()  # 保���配置以更新信号记录
+        self.save_config()  # 保存配置以更新信号记录
 
     def analyze_multiple_timeframes(self, symbol):
         """多时间框架分析"""
@@ -1513,7 +1614,7 @@ class CryptoMonitor:
             return []
 
     def analyze_trend(self, df):
-        """��析单一时间框架的趋势"""
+        """分析单一时间框架的趋势"""
         try:
             closes = df['close'].values
             
@@ -1658,19 +1759,45 @@ class CryptoMonitor:
                 if bullish_signals and bearish_signals:
                     # 可以选择不触发信号，或者触发一个中性信号
                     print("同时存在看涨和看跌信号，选择不触发信号")
+                    for signal in bullish_signals:
+                        self.trigger_signal(signal, time.time())
+                    for signal in bearish_signals:
+                        self.trigger_signal(signal, time.time())
                 elif bullish_signals:
                     for signal in bullish_signals:
                         self.trigger_signal(signal, time.time())
                 elif bearish_signals:
                     for signal in bearish_signals:
                         self.trigger_signal(signal, time.time())
-            else:
-                # 使用其他方法检查信号
-                self.check_patterns(df)
-                self.check_indicators(df)
+            
+            # 使用其他方法检查信号
+            self.check_patterns(df)
+            self.check_indicators(df)
+            prediction = self.predict_best_entry_exit_multi_timeframe(symbol)
+            if prediction:
+              self.root.after(0, lambda: self.display_multi_timeframe_prediction(prediction))
+            
+            # 获取当前交易对
+            symbol = self.symbol_var.get()
+            
+            # 执行预测分析但只在满足阈值时显示
+            prediction = self.predict_best_entry_exit_multi_timeframe(symbol)
+            if prediction:
+                threshold = float(self.prediction_threshold.get())
+                if prediction['confidence'] >= threshold:
+                    # 添加到信号列表
+                    signal_text = (f"{prediction['signal']} "
+                                 f"信心指数:{prediction['confidence']}% "
+                                 f"风险:{prediction['risk_level']}")
+                    self.trigger_signal(signal_text, time.time())
+                    
+                    # 显示预测窗口
+                    self.root.after(0, lambda: self.display_multi_timeframe_prediction(prediction))
         
         except Exception as e:
             print(f"信号检查错误: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
     def fetch_ohlcv_data(self, symbol, timeframe, start_date=None, end_date=None):
         """获取OHLCV数据"""
@@ -2027,7 +2154,269 @@ class CryptoMonitor:
         # 这里可以从交易所API获取可用的交易对列表
         return ['BTC/USDT', 'ETH/USDT', 'XRP/USDT']  # 示例
 
+    def predict_best_entry_exit_multi_timeframe(self, symbol):
+        """
+        多时间维度预测最佳交易点位
+        结合短期、中期、长期走势分析
+        """
+        try:
+            # 定义时间框架组合
+            timeframes = {
+                'short': ['1m', '5m', '15m'],     # 短期
+                'medium': ['30m', '1h', '4h'],    # 中期
+                'long': ['4h', '1d', '1w']        # 长期
+            }
+            
+            # 存储各时间维度的分析结果
+            timeframe_analysis = {
+                'short': {'score': 0, 'signals': [], 'patterns': []},
+                'medium': {'score': 0, 'signals': [], 'patterns': []},
+                'long': {'score': 0, 'signals': [], 'patterns': []}
+            }
+            
+            # 对每个时间维度进行分析
+            for period, tf_list in timeframes.items():
+                for tf in tf_list:
+                    # 获取对应时间框架的数据
+                    df = self.fetch_ohlcv_data(symbol, tf)
+                    if df is None or len(df) < 50:
+                        continue
+                    
+                    # 计算技术指标
+                    closes = df['close'].values
+                    volumes = df['volume'].values
+                    current_price = closes[-1]
+                    
+                    # RSI
+                    rsi = self.calculate_rsi(closes)
+                    
+                    # MACD
+                    macd, signal, hist = self.calculate_macd(closes)
+                    
+                    # 布林带
+                    ma, upper_band, lower_band = self.calculate_bollinger_bands(closes)
+                    
+                    # 成交量分析
+                    volume_ma = np.mean(volumes[-20:])
+                    current_volume = volumes[-1]
+                    
+                    # 趋势分析
+                    trend_score = 0
+                    if current_price > ma:
+                        trend_score += 1
+                    if macd[-1] > signal[-1]:
+                        trend_score += 1
+                    
+                    # 动量分析
+                    momentum_score = 0
+                    if 30 <= rsi <= 70:
+                        momentum_score += 1
+                    elif rsi < 30:
+                        momentum_score += 2  # 超卖
+                    elif rsi > 70:
+                        momentum_score -= 2  # 超买
+                    
+                    # 成交量分析
+                    volume_score = 0
+                    if current_volume > volume_ma * 1.5:
+                        volume_score += 1
+                    
+                    # 形态分析
+                    patterns = []
+                    if self.is_head_and_shoulders_top(df['high'].values):
+                        patterns.append(('头肩顶', -2))
+                    if self.is_head_and_shoulders_bottom(df['low'].values):
+                        patterns.append(('头肩底', 2))
+                    if self.is_double_top(df['high'].values):
+                        patterns.append(('双顶', -2))
+                    if self.is_double_bottom(df['low'].values):
+                        patterns.append(('双底', 2))
+                    
+                    # 计算总分
+                    pattern_score = sum(score for _, score in patterns)
+                    total_score = trend_score + momentum_score + volume_score + pattern_score
+                    
+                    # 更新时间维度分析结果
+                    timeframe_analysis[period]['score'] += total_score
+                    timeframe_analysis[period]['signals'].append({
+                        'timeframe': tf,
+                        'rsi': rsi,
+                        'macd_signal': 'bullish' if macd[-1] > signal[-1] else 'bearish',
+                        'price_vs_ma': 'above' if current_price > ma else 'below',
+                        'volume_signal': 'high' if current_volume > volume_ma * 1.5 else 'normal'
+                    })
+                    timeframe_analysis[period]['patterns'].extend(patterns)
+            
+            # 综合分析结果
+            prediction = {
+                'signal': '',
+                'confidence': 0,
+                'price_targets': {},
+                'reasons': [],
+                'risk_level': '',
+                'timeframe_analysis': timeframe_analysis
+            }
+            
+            # 计算综合得分
+            total_score = (
+                timeframe_analysis['short']['score'] * 0.2 +  # 短期权重20%
+                timeframe_analysis['medium']['score'] * 0.5 + # 中期权重50%
+                timeframe_analysis['long']['score'] * 0.3     # 长期权重30%
+            )
+            
+            # 获取当前价格
+            current_price = self.get_current_price(symbol)
+            
+            # 根据综合得分生成信号
+            if total_score > 3:  # 强烈看多信号
+                prediction['signal'] = '强烈看多'
+                prediction['price_targets'] = {
+                    'entry': current_price,
+                    'target': current_price * (1 + 0.03),  # 3%获利目标
+                    'stop_loss': current_price * (1 - 0.01)  # 1%止损位
+                }
+            elif total_score > 1:  # 看多信号
+                prediction['signal'] = '看多'
+                prediction['price_targets'] = {
+                    'entry': current_price,
+                    'target': current_price * (1 + 0.02),  # 2%获利目标
+                    'stop_loss': current_price * (1 - 0.01)  # 1%止损位
+                }
+            elif total_score < -3:  # 强烈看空信号
+                prediction['signal'] = '强烈看空'
+                prediction['price_targets'] = {
+                    'entry': current_price,
+                    'target': current_price * (1 - 0.03),  # 3%获利目标
+                    'stop_loss': current_price * (1 + 0.01)  # 1%止损位
+                }
+            elif total_score < -1:  # 看空信号
+                prediction['signal'] = '看空'
+                prediction['price_targets'] = {
+                    'entry': current_price,
+                    'target': current_price * (1 - 0.02),  # 2%获利目标
+                    'stop_loss': current_price * (1 + 0.01)  # 1%止损位
+                }
+            else:
+                prediction['signal'] = '观望'
+            
+            # 设置信心水平
+            prediction['confidence'] = min(abs(total_score) * 10, 100)
+            
+            # 生成分析理由
+            for period, analysis in timeframe_analysis.items():
+                period_name = {'short': '短期', 'medium': '中期', 'long': '长期'}[period]
+                
+                # 添加技术指标信号
+                for signal in analysis['signals']:
+                    if signal['macd_signal'] == 'bullish':
+                        prediction['reasons'].append(f"{period_name} {signal['timeframe']} MACD看多")
+                    elif signal['macd_signal'] == 'bearish':
+                        prediction['reasons'].append(f"{period_name} {signal['timeframe']} MACD看空")
+                
+                # 添加形态信号
+                for pattern, _ in analysis['patterns']:
+                    prediction['reasons'].append(f"{period_name}出现{pattern}形态")
+            
+            # 设置风险等级
+            if prediction['confidence'] >= 80:
+                prediction['risk_level'] = '低风险'
+            elif prediction['confidence'] >= 50:
+                prediction['risk_level'] = '中等风险'
+            else:
+                prediction['risk_level'] = '高风险'
+            
+            return prediction
+            
+        except Exception as e:
+            print(f"多时间维度预测错误: {str(e)}")
+            return None
+
+    def display_multi_timeframe_prediction(self, prediction):
+        """显示多时间维度预测结果"""
+        if prediction is None:
+            return
+            
+        # 创建预测结果窗口
+        pred_window = tk.Toplevel(self.root)
+        pred_window.title('多时间维度交易预测分析')
+        pred_window.geometry('600x800')
+        
+        # 使用当前主题
+        pred_window.configure(bg=self.colors['bg'])
+        
+        # 创建主框架
+        main_frame = ttk.Frame(pred_window)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # 显示主要信号
+        signal_frame = ttk.LabelFrame(main_frame, text='交易信号')
+        signal_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(signal_frame, text=f"综合信号: {prediction['signal']}", 
+            font=('Microsoft YaHei UI', 12, 'bold')).pack(pady=5)
+        ttk.Label(signal_frame, text=f"信心指数: {prediction['confidence']}%").pack()
+        ttk.Label(signal_frame, text=f"风险等级: {prediction['risk_level']}").pack()
+        
+        # 显示目标价位
+        if prediction['signal'] != '观望':
+            price_frame = ttk.LabelFrame(main_frame, text='价格目标')
+            price_frame.pack(fill=tk.X, pady=5)
+            
+            ttk.Label(price_frame, text=f"入场价: {prediction['price_targets']['entry']:.2f}").pack()
+            ttk.Label(price_frame, text=f"目标价: {prediction['price_targets']['target']:.2f}").pack()
+            ttk.Label(price_frame, text=f"止损价: {prediction['price_targets']['stop_loss']:.2f}").pack()
+        
+        # 显示时间维度分析
+        timeframe_frame = ttk.LabelFrame(main_frame, text='时间维度分析')
+        timeframe_frame.pack(fill=tk.X, pady=5)
+        
+        for period, analysis in prediction['timeframe_analysis'].items():
+            period_name = {'short': '短期', 'medium': '中期', 'long': '长期'}[period]
+            ttk.Label(timeframe_frame, text=f"\n{period_name}分析:", 
+                font=('Microsoft YaHei UI', 10, 'bold')).pack(anchor='w')
+            ttk.Label(timeframe_frame, text=f"得分: {analysis['score']}").pack(anchor='w')
+            
+            # 显示各时间框架的信号
+            for signal in analysis['signals']:
+                signal_text = f"• {signal['timeframe']}: "
+                signal_text += f"MACD {signal['macd_signal']}, "
+                signal_text += f"价格在均线{'上方' if signal['price_vs_ma'] == 'above' else '下方'}, "
+                signal_text += f"成交量{'放大' if signal['volume_signal'] == 'high' else '正常'}"
+                ttk.Label(timeframe_frame, text=signal_text).pack(anchor='w')
+        
+        # 显示分析理由
+        reasons_frame = ttk.LabelFrame(main_frame, text='详细分析理由')
+        reasons_frame.pack(fill=tk.X, pady=5)
+        
+        for reason in prediction['reasons']:
+            ttk.Label(reasons_frame, text=f"• {reason}").pack(anchor='w')
+
+    def get_current_price(self, symbol):
+        """
+        获取当前价格
+        """
+        try:
+            # 首先尝试从交易所获取最新价格
+            ticker = self.exchange.fetch_ticker(symbol)
+            if ticker and 'last' in ticker:
+                return ticker['last']
+            
+            # 如果无法直接获取最新价格，则从最近的K线数据中获取
+            df = self.fetch_ohlcv_data(symbol, '1m', limit=1)  # 获取最近1分钟的数据
+            if df is not None and not df.empty:
+                return df['close'].iloc[-1]
+                
+            # 如果都失败了，抛出异常
+            raise Exception("无法获取当前价格")
+            
+        except Exception as e:
+            print(f"获取当前价格错误: {str(e)}")
+            # 返回None或者抛出异常，这里选择返回None
+            return None
+
+
 if __name__ == '__main__':
     app = CryptoMonitor()
     app.run()
+
 
