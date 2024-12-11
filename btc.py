@@ -73,6 +73,7 @@ class CryptoMonitor:
         self.proxy_host = tk.StringVar(value='127.0.0.1')
         self.proxy_port = tk.StringVar(value='7890')
         self.max_signals = tk.IntVar(value=100)
+        self.trade_amount = tk.DoubleVar(value=100.0)  # 默认交易金额
         
         # 初始化价格提醒设置
         self.price_alert = tk.BooleanVar(value=True)
@@ -99,7 +100,7 @@ class CryptoMonitor:
         # 初始化其他变量
         self.running = False
         self.recent_signals = []
-        self.use_ml_model = tk.BooleanVar(value=True)  # 默认启用机器学习模型
+        self.use_ml_model = tk.BooleanVar(value=False)  # 默认启用机器学习模型
         
         # 加载设置
         self.load_settings()
@@ -155,7 +156,8 @@ class CryptoMonitor:
             'timeframe': '1h',
             'max_signals': 100,
             'recent_signals': [],
-            'theme': 'VSCode'
+            'theme': 'VSCode',
+            'trade_amount': 100.0,  # 默认交易金额
         }
         if os.path.exists(self.config_file):
             try:
@@ -183,6 +185,7 @@ class CryptoMonitor:
         
         # 更新信号显示
         self.update_signal_display()
+        self.trade_amount.set(self.config.get('trade_amount', 100.0))
     
     def load_config(self):
         """从文件加载配置"""
@@ -249,7 +252,8 @@ class CryptoMonitor:
             'timeframe': self.timeframe_var.get(),
             'max_signals': self.max_signals.get(),
             'recent_signals': self.recent_signals,
-            'theme': self.current_theme.get()
+            'theme': self.current_theme.get(),
+            'trade_amount': self.trade_amount.get(),  # 保存交易金额
         })
         with open(self.config_file, 'w', encoding='utf-8') as f:
             json.dump(self.config, f, ensure_ascii=False)
@@ -495,6 +499,13 @@ class CryptoMonitor:
         ttk.Label(levels_frame, text='压力位:').pack(side=tk.LEFT, padx=2)
         self.resistance_label = ttk.Label(levels_frame, textvariable=self.resistance_level)
         self.resistance_label.pack(side=tk.LEFT, padx=2)
+        
+        # 添加资金管理设置框
+        fund_management_frame = ttk.LabelFrame(control_frame, text='资金管理', padding=2)
+        fund_management_frame.pack(pady=2, padx=2, fill=tk.X)
+        
+        ttk.Label(fund_management_frame, text='交易金额:').pack(side=tk.LEFT, padx=2)
+        ttk.Entry(fund_management_frame, textvariable=self.trade_amount, width=10).pack(side=tk.LEFT, padx=2)
     
     def apply_theme(self):
         """应用当前主题"""
@@ -660,8 +671,10 @@ class CryptoMonitor:
             # 保存配置
             self.save_config()
             
-            # 弹出提醒
-            self.root.after(0, lambda: messagebox.showinfo('信号提醒', f'{self.symbol_var.get()} {signal_name}！'))
+            # 结合信号评分建议买入或卖出金额
+            trade_amount = self.trade_amount.get()
+            message = f'{self.symbol_var.get()} {signal_name}！建议交易金额: {trade_amount} USDT'
+            self.root.after(0, lambda: messagebox.showinfo('信号提醒', message))
     
     def update_signal_display(self):
         """更新最近信号显示"""
@@ -1366,7 +1379,14 @@ class CryptoMonitor:
         cancel_button = ttk.Button(button_frame, text='取消',
             command=settings_window.destroy)
         cancel_button.pack(side=tk.RIGHT, padx=5)
-
+        
+        # 资金管理设置
+        fund_management_frame = ttk.LabelFrame(main_frame, text='资金管理', padding=5)
+        fund_management_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(fund_management_frame, text='交易金额:').pack(side=tk.LEFT, padx=5)
+        ttk.Entry(fund_management_frame, textvariable=self.trade_amount, width=10).pack(side=tk.LEFT, padx=5)
+    
     def save_settings(self, settings_window=None):
         """保存设置"""
         try:
