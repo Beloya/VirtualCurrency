@@ -5,6 +5,10 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import TimeSeriesSplit
 import pickle
+from analyzers.technical_analyzer import TechnicalAnalyzer
+from analyzers.pattern_analyzer import PatternAnalyzer
+from analyzers.multi_timeframe_analyzer import MultiTimeframeAnalyzer
+
 
 class MLModel:
     def __init__(self, use_ml_model):
@@ -12,6 +16,9 @@ class MLModel:
         self.feature_columns = []
         self.is_model_trained = False
         self.use_ml_model = use_ml_model
+        self.te = TechnicalAnalyzer()
+        self.pa = PatternAnalyzer()
+
         # 初始化随机森林模型
         # self.model = RandomForestClassifier(n_estimators=100, random_state=42)
 
@@ -40,23 +47,23 @@ class MLModel:
             
             # 计算RSI
             for window in [6, 14, 20]:
-                features[f'rsi_{window}'] = self.calculate_rsi(df['close'].values, period=window)
+                features[f'rsi_{window}'] = self.te.calculate_rsi(df['close'].values, period=window)
             
             # 计算MACD
-            macd, signal, hist = self.calculate_macd(df['close'].values)
+            macd, signal, hist = self.te.calculate_macd(df['close'].values)
             features['macd'] = macd
             features['macd_signal'] = signal
             features['macd_hist'] = hist
             
             # 计算布林带
             for window in [20, 50]:
-                ma, upper, lower = self.calculate_bollinger_bands(df['close'].values, window=window)
+                ma, upper, lower = self.te.calculate_bollinger_bands(df['close'].values, window=window)
                 features[f'bb_upper_{window}'] = upper
                 features[f'bb_lower_{window}'] = lower
                 features[f'bb_width_{window}'] = (upper - lower) / ma
             
             # 计算OBV
-            features['obv'] = self.calculate_obv(df['close'].values, df['volume'].values)
+            features['obv'] = self.te.calculate_obv(df['close'].values, df['volume'].values)
             
             # 添加时间特征
             features['hour'] = df.index.hour

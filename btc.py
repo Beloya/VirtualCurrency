@@ -5,7 +5,6 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import pandas as pd
 import numpy as np
-import ccxt
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from datetime import datetime, timedelta
@@ -21,6 +20,10 @@ import pickle
 from data_fetcher import DataFetcher
 from sklearn.model_selection import TimeSeriesSplit
 from ml_model import MLModel
+from analyzers.pattern_analyzer import PatternAnalyzer
+from analyzers.technical_analyzer import TechnicalAnalyzer
+from analyzers.multi_timeframe_analyzer import MultiTimeframeAnalyzer
+
 
 # 设置matplotlib的默认编码
 plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']  # 设置中文字体
@@ -125,6 +128,14 @@ class CryptoMonitor:
         self.update_signal_display()
         # 初始化数据获取器
         self.data_fetcher = DataFetcher(exchange_name='binance', use_proxy=self.use_proxy.get(), proxy_host=self.proxy_host.get(), proxy_port=self.proxy_port.get())
+
+
+        # 初始化技术指标分析器
+        self.technical_analyzer = TechnicalAnalyzer()
+        # 初始化蜡烛图形态分析器
+        self.pattern_analyzer = PatternAnalyzer()
+        # 初始化多时间框架分析器
+        self.multi_timeframe_analyzer = MultiTimeframeAnalyzer(self.data_fetcher)
 
 
         # 初始化数据
@@ -268,6 +279,8 @@ class CryptoMonitor:
             'theme': self.current_theme.get(),
             'trade_amount': self.trade_amount.get(),  # 保存交易金额
             'prediction_threshold': self.prediction_threshold.get(),  # 保存预测阈值
+            'use_ml_model': self.use_ml_model.get(),
+
         })
         with open(self.config_file, 'w', encoding='utf-8') as f:
             json.dump(self.config, f, ensure_ascii=False)
@@ -551,13 +564,13 @@ class CryptoMonitor:
             symbol = self.symbol_var.get()
             
             # 执行多时间框架分析
-            multi_tf_signals = self.analyze_multiple_timeframes(symbol)
+            multi_tf_signals = self.multi_timeframe_analyzer.analyze_multiple_timeframes(symbol)
             
             # 触发信号
             for signal, timestamp in multi_tf_signals:
                 self.trigger_signal(signal, timestamp)
             
-            if self.use_ml_model.get() and self.is_model_trained:
+            if self.use_ml_model.get() and self.ml_model.is_model_trained:
                 # 使用机器学习模型检查信号
                 predictions = self.ml_model.predict_market_behavior(df)
                 result = self.ml_model.determine_market_trend(predictions['predictions'], predictions['probabilities'])
@@ -565,7 +578,7 @@ class CryptoMonitor:
                 self.trigger_signal(f'ML模型预测{result}信号', time.time())
             
             # 执行预测分析但只在满足阈值时显示
-            prediction = self.predict_best_entry_exit_multi_timeframe(symbol)
+            prediction = self.multi_timeframe_analyzer.predict_best_entry_exit_multi_timeframe(symbol)
             if prediction and prediction['signal'] != '观望':  # 只在有明确信号时检查
                 try:
                     threshold = float(self.prediction_threshold.get())
@@ -595,8 +608,17 @@ class CryptoMonitor:
                     print("预警阈值设置无效")
             
             # 使用其他方法检查信号
-            self.check_patterns(df)
-            self.check_indicators(df)
+            signals=[]
+            tech_signals=self.pattern_analyzer.check_patterns(df)
+            if tech_signals:
+                signals.extend(tech_signals)
+            # signals.extend(self.technical_analyzer.check_indicators(df))
+            tech_signals=self.technical_analyzer.check_technical_signals(df, self.ma_cross_alert.get(), self.bollinger_alert.get(), self.price_alert.get(), self.volume_alert.get(), self.trend_alert.get(), self.momentum_alert.get(), self.macd_cross_alert.get(),self.monitor_minutes.get(),self.price_threshold.get())
+            if tech_signals:
+                signals.extend(tech_signals)
+            for i,signal in enumerate(signals):
+                self.trigger_signal(signal, time.time())
+            # self.multi_timeframe_analyzer.analyze_trend(df)
             
         except Exception as e:
             print(f"信号检查错误: {str(e)}")
@@ -628,122 +650,18 @@ class CryptoMonitor:
         self.save_config()  # 保存当前主题设置
     
     def calculate_indicators(self, df):
-        # 计算MA
-        df['MA5'] = df['close'].rolling(window=5).mean()
-        df['MA10'] = df['close'].rolling(window=10).mean()
-        
-        # 计算布林带
-        df['MA20'] = df['close'].rolling(window=20).mean()
-        df['std'] = df['close'].rolling(window=20).std()
-        df['upper'] = df['MA20'] + (df['std'] * 2)
-        df['lower'] = df['MA20'] - (df['std'] * 2)
-        
-        # 计算RSI
-        delta = df['close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        df['RSI'] = 100 - (100 / (1 + rs))
-        
-        # 计算MACD
-        exp1 = df['close'].ewm(span=12, adjust=False).mean()
-        exp2 = df['close'].ewm(span=26, adjust=False).mean()
-        df['MACD'] = exp1 - exp2
-        df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-        df['Histogram'] = df['MACD'] - df['Signal']
-        
+        # 计算技术指标
+        df=self.technical_analyzer.calculate_indicators(df)
         # 计算支撑位和压力位
-        self.support_level.set(f"{df['low'].min():.2f}")
-        self.resistance_level.set(f"{df['high'].max():.2f}")
-        
+        supports, resistances = self.technical_analyzer.calculate_support_resistance(df)
+        # 设置支撑位和压力位
+        if supports:
+            self.support_level.set(f"{supports:.2f}")
+        if resistances:
+            self.resistance_level.set(f"{resistances:.2f}")        
         return df
         
-    def check_signals(self, df):
-        """检查各种信号"""
-        try:
-            current_time = time.time()
-            
-            # 检查金叉死叉
-            if self.ma_cross_alert.get():
-                if df['MA5'].iloc[-2] <= df['MA10'].iloc[-2] and df['MA5'].iloc[-1] > df['MA10'].iloc[-1]:
-                    self.trigger_signal('金叉', current_time)
-                elif df['MA5'].iloc[-2] >= df['MA10'].iloc[-2] and df['MA5'].iloc[-1] < df['MA10'].iloc[-1]:
-                    self.trigger_signal('死叉', current_time)
-            
-            # 检查布林带突破
-            if self.bollinger_alert.get():
-                if df['close'].iloc[-1] > df['upper'].iloc[-1]:
-                    self.trigger_signal('突破布林上轨', current_time)
-                elif df['close'].iloc[-1] < df['lower'].iloc[-1]:
-                    self.trigger_signal('突破布林下轨', current_time)
-            
-            # 检查价格变动
-            if self.price_alert.get():
-                monitor_minutes = int(self.monitor_minutes.get())
-                threshold = float(self.price_threshold.get())
-                
-                minutes_ago = df.index[-1] - timedelta(minutes=monitor_minutes)
-                old_price = df.loc[df.index >= minutes_ago].iloc[0]['close']
-                current_price = df['close'].iloc[-1]
-                
-                # 价格变动百分
-                price_change = ((current_price - old_price) / old_price) * 100
-                
-                if abs(price_change) >= threshold:
-                    direction = "上涨" if price_change > 0 else "下跌"
-                    self.trigger_signal(f'价格变动{direction}', current_time)
-            
-            # 检查成交量异常
-            if self.volume_alert.get():
-                # 计算成交量的移动平均
-                volume_ma = df['volume'].rolling(window=20).mean()
-                current_volume = df['volume'].iloc[-1]
-                
-                # 如果当前成交量超平均的2倍
-                if current_volume > volume_ma.iloc[-1] * 2:
-                    self.trigger_signal('成交量异常放', current_time)
-            
-            # 检查趋势突破
-            if self.trend_alert.get():
-                # 使用20日均线作为趋势线
-                ma20 = df['close'].rolling(window=20).mean()
-                price = df['close'].iloc[-1]
-                prev_price = df['close'].iloc[-2]
-                
-                if prev_price <= ma20.iloc[-2] and price > ma20.iloc[-1]:
-                    self.trigger_signal('向上突破20日均线', current_time)
-                elif prev_price >= ma20.iloc[-2] and price < ma20.iloc[-1]:
-                    self.trigger_signal('向下突破20日均线', current_time)
-            
-            # 检查动量背离
-            if self.momentum_alert.get():
-                # 价格创新高但RSI未创新高，可能��现顶背离
-                if (df['close'].iloc[-1] > df['close'].iloc[-2:-6].max() and 
-                    df['RSI'].iloc[-1] < df['RSI'].iloc[-2:-6].max()):
-                    self.trigger_signal('可能出现顶背离', current_time)
-                
-                # 价格创新低但RSI未创新低，可能出现底背离
-                if (df['close'].iloc[-1] < df['close'].iloc[-2:-6].min() and 
-                    df['RSI'].iloc[-1] > df['RSI'].iloc[-2:-6].min()):
-                    self.trigger_signal('可能出现底背离', current_time)
-            
-            # 检查MACD交叉
-            if self.macd_cross_alert.get():
-                # MACD金叉
-                if (df['MACD'].iloc[-2] <= df['Signal'].iloc[-2] and 
-                    df['MACD'].iloc[-1] > df['Signal'].iloc[-1]):
-                    self.trigger_signal('MACD金叉', current_time)
-                
-                # MACD死叉
-                elif (df['MACD'].iloc[-2] >= df['Signal'].iloc[-2] and 
-                      df['MACD'].iloc[-1] < df['Signal'].iloc[-1]):
-                    self.trigger_signal('MACD死叉', current_time)
-                    
-            # 检查经典形态
-            self.check_patterns(df)
-            
-        except Exception as e:
-            print(f"策略检查错误: {str(e)}")
+    
     
     def trigger_signal(self, signal_name, current_time):
         """触发信号提醒"""
@@ -762,12 +680,12 @@ class CryptoMonitor:
                 self.recent_signals = self.recent_signals[-max_signals:]
             
             # 更新信号显示
-            self.update_signal_display()
+            self.root.after(3000, lambda: self.update_signal_display())
             
             # 结合信号评分建议买入或卖出金额
             trade_amount = self.trade_amount.get()
-            message = f'{self.symbol_var.get()} {signal_name}！建议交易金额: {trade_amount} USDT'
-            print(message)
+            # message = f'{self.symbol_var.get()} {signal_name}！建议交易金额: {trade_amount} USDT'
+            # print(message)
             # self.root.after(0, lambda: messagebox.showinfo('信号提醒', message))
     
     def update_signal_display(self):
@@ -1172,206 +1090,10 @@ class CryptoMonitor:
             command=help_window.destroy)
         close_button.pack(pady=10)
 
-    def check_patterns(self, df):
-        """检查经典技术形态"""
-        try:
-            # 获取最近的价格数据
-            prices = df['close'].values
-            highs = df['high'].values
-            lows = df['low'].values
-            
-            # 存储检测到的形态
-            patterns = []
-            
-            # 头肩顶形态判断
-            if self.is_head_and_shoulders_top(highs[-100:]):
-                patterns.append(('头肩顶', 'bearish'))
-            
-            # 头肩底形态判断
-            elif self.is_head_and_shoulders_bottom(lows[-100:]):
-                patterns.append(('头肩底', 'bullish'))
-            
-            # 双顶形态判断
-            elif self.is_double_top(highs[-50:]):
-                patterns.append(('双顶', 'bearish'))
-            
-            # 双底形态判断
-            elif self.is_double_bottom(lows[-50:]):
-                patterns.append(('双底', 'bullish'))
-            
-            # 三角形形态判断（只在没有发现其他形态时检查）
-            if not patterns:
-                if self.is_ascending_triangle(highs[-50:], lows[-50:]):
-                    patterns.append(('上升三角形', 'bullish'))
-                elif self.is_descending_triangle(highs[-50:], lows[-50:]):
-                    patterns.append(('下降三角形', 'bearish'))
-            
-        except Exception as e:
-            print(f"形态检查错误: {str(e)}")
+    
 
-    def is_head_and_shoulders_top(self, prices, threshold=0.02, min_distance=5):
-        """改进的头肩顶形��检测"""
-        if len(prices) < 50:
-            return False
-        
-        # 寻找所有峰值
-        peaks = []
-        for i in range(2, len(prices)-2):
-            if prices[i] > prices[i-1] and prices[i] > prices[i-2] and \
-               prices[i] > prices[i+1] and prices[i] > prices[i+2]:
-                peaks.append((i, prices[i]))
-        
-        # 确保有足够的峰值
-        if len(peaks) < 3:
-            return False
-        
-        # 检查最后的峰值序列
-        for i in range(len(peaks)-2):
-            left_shoulder = peaks[i]
-            head = peaks[i+1]
-            right_shoulder = peaks[i+2]
-            
-            # 检查时间间隔
-            if head[0] - left_shoulder[0] < min_distance or \
-               right_shoulder[0] - head[0] < min_distance:
-                continue
-            
-            # 检查头部是否高于两肩
-            if head[1] > left_shoulder[1] and head[1] > right_shoulder[1]:
-                # 检查两肩是否大致相等
-                shoulder_diff = abs(left_shoulder[1] - right_shoulder[1])
-                if shoulder_diff / left_shoulder[1] < threshold:
-                    # 检查颈线是否大致水平
-                    neckline_slope = (right_shoulder[1] - left_shoulder[1]) / (right_shoulder[0] - left_shoulder[0])
-                    if abs(neckline_slope) < 0.1:  # 允许轻微倾斜
-                        return True
-        
-        return False
 
-    def is_double_top(self, prices, threshold=0.02, min_distance=5, max_distance=30):
-        """改进的双顶形态检测"""
-        if len(prices) < 30:
-            return False
-        
-        # 寻找峰值
-        peaks = []
-        for i in range(2, len(prices)-2):
-            if prices[i] > prices[i-1] and prices[i] > prices[i-2] and \
-               prices[i] > prices[i+1] and prices[i] > prices[i+2]:
-                peaks.append((i, prices[i]))
-        
-        if len(peaks) < 2:
-            return False
-        
-        # 检查最后两个峰值
-        for i in range(len(peaks)-1):
-            first_peak = peaks[i]
-            second_peak = peaks[i+1]
-            
-            # 检查时间间隔
-            peak_distance = second_peak[0] - first_peak[0]
-            if min_distance <= peak_distance <= max_distance:
-                # 检查峰值是否大致相等
-                peak_diff = abs(first_peak[1] - second_peak[1])
-                if peak_diff / first_peak[1] < threshold:
-                    # 检查中间的谷值
-                    valley = min(prices[first_peak[0]:second_peak[0]])
-                    if valley < min(first_peak[1], second_peak[1]) * 0.95:
-                        return True
-        
-        return False
-
-    def is_head_and_shoulders_bottom(self, prices, threshold=0.02):
-        """头肩底形态检测"""
-        if len(prices) < 50:
-            return False
-        
-        # 寻找三个谷值
-        valleys = []
-        for i in range(2, len(prices)-2):
-            if prices[i] < prices[i-1] and prices[i] < prices[i-2] and \
-               prices[i] < prices[i+1] and prices[i] < prices[i+2]:
-                valleys.append((i, prices[i]))
-        
-        if len(valleys) < 3:
-            return False
-        
-        # 检查最后三个��值是否符合头肩底形态
-        last_valleys = valleys[-3:]
-        if len(last_valleys) == 3:
-            left_shoulder, head, right_shoulder = last_valleys
-            
-            # 头部应该低于两肩
-            if head[1] < left_shoulder[1] and head[1] < right_shoulder[1]:
-                # 两肩应该大致相等
-                shoulder_diff = abs(left_shoulder[1] - right_shoulder[1])
-                if shoulder_diff / left_shoulder[1] < threshold:
-                    return True
-        
-        return False
-
-    def is_double_bottom(self, prices, threshold=0.02):
-        """双底形态检测"""
-        if len(prices) < 30:
-            return False
-        
-        # 寻找谷值
-        valleys = []
-        for i in range(2, len(prices)-2):
-            if prices[i] < prices[i-1] and prices[i] < prices[i-2] and \
-               prices[i] < prices[i+1] and prices[i] < prices[i+2]:
-                valleys.append((i, prices[i]))
-        
-        if len(valleys) < 2:
-            return False
-        
-        # 检查最后两个���值
-        last_valleys = valleys[-2:]
-        if len(last_valleys) == 2:
-            first_valley, second_valley = last_valleys
-            
-            # 两个谷值应该大致相等
-            valley_diff = abs(first_valley[1] - second_valley[1])
-            if valley_diff / first_valley[1] < threshold:
-                # 两个谷值之间应该有足够的距离
-                if 5 <= second_valley[0] - first_valley[0] <= 30:
-                    return True
-        
-        return False
-
-    def is_ascending_triangle(self, highs, lows, threshold=0.02):
-        """上升三角形形态检测"""
-        if len(highs) < 20 or len(lows) < 20:
-            return False
-        
-        # 检查最高点是否形成水平线
-        high_diff = abs(highs[-1] - highs[-10])
-        if high_diff / highs[-1] > threshold:
-            return False
-        
-        # 检查最低��是否形成上升趋势
-        low_slope = (lows[-1] - lows[-10]) / 10
-        if low_slope <= 0:
-            return False
-        
-        return True
-
-    def is_descending_triangle(self, highs, lows, threshold=0.02):
-        """下降三角形形态检测"""
-        if len(highs) < 20 or len(lows) < 20:
-            return False
-        
-        # 检查最低点是否形成水平线
-        low_diff = abs(lows[-1] - lows[-10])
-        if low_diff / lows[-1] > threshold:
-            return False
-        
-        # 检查最高点是否形成下降趋势
-        high_slope = (highs[-1] - highs[-10]) / 10
-        if high_slope >= 0:
-            return False
-        
-        return True
+    
 
     def show_settings_window(self):
         """显示设置窗口"""
@@ -1493,19 +1215,11 @@ class CryptoMonitor:
             # 更新信号显示
             self.update_signal_display()
             
-            # 保存机器学习模型启用状态
-            config = {
-                'use_ml_model': self.use_ml_model.get(),
-                # 其他配置项...
-            }
-            
-            with open('config.json', 'w') as f:
-                json.dump(config, f)
             
             if settings_window:
                 settings_window.destroy()
             
-            print("设置已保�����")
+            print("设置已保存")
         
         except Exception as e:
             print(f"保存设置时出错：{str(e)}")
@@ -1524,442 +1238,7 @@ class CryptoMonitor:
         self.recent_signals.clear()
         self.update_signal_display()
         self.save_config()  # 保存配置以更新信号记录
-
-    def analyze_multiple_timeframes(self, symbol):
-        """多时间框架分析"""
-        try:
-            # print("多时间框架分析")
-            # 定义时间框架组合
-            timeframe_groups = [
-                ['1m', '5m', '15m'],  # 短期
-                ['15m', '1h', '4h'],  # 中期
-                ['4h', '1d', '1w']    # 长期
-            ]
-            
-            # 存储各时间框架的趋势
-            trends = {}
-            patterns = {}
-            
-            # 分析每个时间框架
-            for timeframes in timeframe_groups:
-                group_trends = []
-                group_patterns = []
-                
-                for tf in timeframes:
-                    # 获取对应时间框架的数据
-                    df = self.data_fetcher.fetch_ohlcv_data(symbol, tf)
-                    if df is None or len(df) < 50:
-                        continue
-                    
-                    # 分析趋势
-                    trend = self.analyze_trend(df)
-                    group_trends.append((tf, trend))
-                    
-                    # 分析形态
-                    pattern = self.analyze_patterns(df)
-                    if pattern:
-                        group_patterns.append((tf, pattern))
-                
-                trends[f"{timeframes[0]}-{timeframes[-1]}"] = group_trends
-                patterns[f"{timeframes[0]}-{timeframes[-1]}"] = group_patterns
-            
-            return self.generate_multi_timeframe_signals(trends, patterns)
-        
-        except Exception as e:
-            print(f"多时间框架分析错误: {str(e)}")
-            return []
-
-    def analyze_trend(self, df):
-        """分析单一时间框架的趋势"""
-        try:
-            closes = df['close'].values
-            
-            # 计算多个指标
-            # 1. 移动平均线趋势
-            ma20 = np.mean(closes[-20:])
-            ma50 = np.mean(closes[-50:])
-            current_price = closes[-1]
-            
-            # 2. 计算RSI
-            rsi = self.calculate_rsi(closes)[-1]
-            
-            # 3. 计算MACD
-            macd, signal, hist = self.calculate_macd(closes)
-            
-            # 综合判断趋势
-            trend = {
-                'direction': 'neutral',
-                'strength': 0,
-                'price_vs_ma': 'neutral',
-                'rsi_status': 'neutral',
-                'macd_status': 'neutral'
-            }
-            
-            # 价格与均线关系
-            if current_price > ma20 > ma50:
-                trend['direction'] = 'bullish'
-                trend['price_vs_ma'] = 'bullish'
-                trend['strength'] += 1
-            elif current_price < ma20 < ma50:
-                trend['direction'] = 'bearish'
-                trend['price_vs_ma'] = 'bearish'
-                trend['strength'] += 1
-            
-            # RSI状态
-            if rsi > 70:
-                trend['rsi_status'] = 'overbought'
-                if trend['direction'] == 'bearish':
-                    trend['strength'] += 1
-            elif rsi < 30:
-                trend['rsi_status'] = 'oversold'
-                if trend['direction'] == 'bullish':
-                    trend['strength'] += 1
-            
-            # MACD状态
-            if hist[-1] > 0 and hist[-1] > hist[-2]:
-                trend['macd_status'] = 'bullish'
-                if trend['direction'] == 'bullish':
-                    trend['strength'] += 1
-            elif hist[-1] < 0 and hist[-1] < hist[-2]:
-                trend['macd_status'] = 'bearish'
-                if trend['direction'] == 'bearish':
-                    trend['strength'] += 1
-            
-            return trend
-        
-        except Exception as e:
-            print(f"趋势分析错误: {str(e)}")
-            return None
-
-    def analyze_patterns(self, df):
-        """分析单一时间框架的形态"""
-        patterns = []
-        highs = df['high'].values
-        lows = df['low'].values
-        
-        # 检查各种形态
-        if self.is_head_and_shoulders_top(highs):
-            patterns.append(('头肩顶', 'bearish'))
-        elif self.is_head_and_shoulders_bottom(lows):
-            patterns.append(('头肩底', 'bullish'))
-        elif self.is_double_top(highs):
-            patterns.append(('双顶', 'bearish'))
-        elif self.is_double_bottom(lows):
-            patterns.append(('双底', 'bullish'))
-        
-        return patterns
-
-    def generate_multi_timeframe_signals(self, trends, patterns):
-        """生成多时间框架信号"""
-        signals = []
-        current_time = time.time()
-        
-        for timeframe_group, group_trends in trends.items():
-            # 检查趋势一致性
-            trend_directions = [t[1]['direction'] for t in group_trends if t[1]]
-            trend_strengths = [t[1]['strength'] for t in group_trends if t[1]]
-            
-            if len(trend_directions) >= 2:  # 至少需要两个时间框架的数据
-                # 检查趋势是否一致
-                if all(d == 'bullish' for d in trend_directions):
-                    avg_strength = sum(trend_strengths) / len(trend_strengths)
-                    signal = f"{timeframe_group}时间框架趋势一致看涨 (强度: {avg_strength:.1f})"
-                    signals.append((signal, current_time))
-                
-                elif all(d == 'bearish' for d in trend_directions):
-                    avg_strength = sum(trend_strengths) / len(trend_strengths)
-                    signal = f"{timeframe_group}时间框架趋势一致看跌 (强度: {avg_strength:.1f})"
-                    signals.append((signal, current_time))
-            
-            # 检查形态确认
-            group_patterns = patterns[timeframe_group]
-            if group_patterns:
-                pattern_directions = [p[1] for tf, plist in group_patterns for p in plist]
-                if len(pattern_directions) >= 2:
-                    if all(d == 'bullish' for d in pattern_directions):
-                        signal = f"{timeframe_group}时间框架形态确认看涨"
-                        signals.append((signal, current_time))
-                    elif all(d == 'bearish' for d in pattern_directions):
-                        signal = f"{timeframe_group}时间框架形态确认看跌"
-                        signals.append((signal, current_time))
-        
-        return signals
-
-    def check_signals(self, df):
-        """检查信号"""
-        try:
-            # 获取当前交易对
-            symbol = self.symbol_var.get()
-            
-            # 执行多时间框架分析
-            multi_tf_signals = self.analyze_multiple_timeframes(symbol)
-            
-            # 触发信号
-            for signal, timestamp in multi_tf_signals:
-                self.trigger_signal(signal, timestamp)
-            
-            if self.use_ml_model.get() and self.is_model_trained:
-                # 使用机器学习模型检查信号
-                predictions = self.ml_model.predict_market_behavior(df)
-                result = self.ml_model.determine_market_trend(predictions['predictions'], predictions['probabilities'])
-                print(f"预测结果: {predictions}")
-                self.trigger_signal(f'ML模型预测{result}信号', time.time())
-               
-            
-            # 执行预测分析但只在满足阈值时显示
-            prediction = self.predict_best_entry_exit_multi_timeframe(symbol)
-            if prediction and prediction['signal'] != '观望':  # 只在有明确信号时检查
-                try:
-                    threshold = float(self.prediction_threshold.get())
-                    if prediction['confidence'] >= threshold:
-                        # 检查是否已经触发过相同信号
-                        current_time = time.time()
-                        signal_key = f"{prediction['signal']}_{prediction['confidence']}"
-                        
-                        # 如果该信号在最近30分钟内没有触发过
-                        if (signal_key not in self.last_signal_times or 
-                            current_time - self.last_signal_times.get(signal_key, 0) > 1800):
-                            
-                            # 更新最后触发时间
-                            self.last_signal_times[signal_key] = current_time
-                            
-                            # 添加时间戳到信号
-                            signal_time = datetime.now().strftime('%H:%M:%S')
-                            signal_text = f"[{signal_time}] {prediction['signal']} "
-                            signal_text += f"(信心度: {prediction['confidence']}%)"
-                            
-                            # 触发信号
-                            self.trigger_signal(signal_text, current_time)
-                            
-                            # 显示预测窗口
-                            self.root.after(0, lambda: self.display_multi_timeframe_prediction(prediction))
-                except ValueError:
-                    print("预警阈值设置无效")
-            
-            # 使用其他方法检查信号
-            self.check_patterns(df)
-            self.check_indicators(df)
-            
-        except Exception as e:
-            print(f"信号检查错误: {str(e)}")
-            import traceback
-            traceback.print_exc()
-
     
-
-    def check_indicators(self, df):
-        """检查技术指标信号"""
-        try:
-            closes = df['close'].values
-            volumes = df['volume'].values
-            
-            # 动态计算布林带
-            ma, upper_band, lower_band = self.calculate_dynamic_bollinger_bands(closes)
-            
-            # 动态计算RSI
-            rsi, overbought_threshold, oversold_threshold = self.calculate_dynamic_rsi(closes)
-            
-            # 计算OBV
-            obv = self.calculate_obv(closes, volumes)
-            
-            # 检查布林带突破[
-            if closes[-1] > upper_band[-1]:
-                self.trigger_signal('价格突破布林带上轨，可能回调', time.time())
-            elif closes[-1] < lower_band[-1]:
-                self.trigger_signal('价格跌破布林带下轨，可能反弹', time.time())
-            
-            # 检查RSI超买超卖
-            if rsi[-1] > overbought_threshold:
-                self.trigger_signal(f'RSI超买（>{overbought_threshold}），可能回调', time.time())
-            elif rsi[-1] < oversold_threshold:
-                self.trigger_signal(f'RSI超卖（<{oversold_threshold}），可能反弹', time.time())
-            
-            # 检查OBV趋势
-            if obv > 0:
-                self.trigger_signal('OBV上升，可能看涨', time.time())
-            elif obv < 0:
-                self.trigger_signal('OBV下降，可能看跌', time.time())
-            
-            # 检查蜡烛图形态
-            self.check_candlestick_patterns(df)
-        
-        except Exception as e:
-            print(f"技术指标检查错误: {str(e)}")
-
-    def calculate_bollinger_bands(self, prices, window=20, num_std_dev=2):
-        """计算布林带"""
-        try:
-            if len(prices) < window:
-                return None, None, None
-                
-            # 使用numpy计算移动平均和标准差
-            ma = np.array([np.mean(prices[max(0, i-window+1):i+1]) 
-                          for i in range(window-1, len(prices))])
-            std = np.array([np.std(prices[max(0, i-window+1):i+1]) 
-                           for i in range(window-1, len(prices))])
-            
-            upper_band = ma + (std * num_std_dev)
-            lower_band = ma - (std * num_std_dev)
-            
-            # 填充前面的值
-            padding = np.array([np.nan] * (window-1))
-            ma = np.concatenate([padding, ma])
-            upper_band = np.concatenate([padding, upper_band])
-            lower_band = np.concatenate([padding, lower_band])
-            
-            return ma, upper_band, lower_band
-            
-        except Exception as e:
-            print(f"计算布林带错误: {str(e)}")
-            return None, None, None
-
-    def calculate_dynamic_bollinger_bands(self, prices):
-        """根据市场波动性动态调整布林带窗口"""
-        volatility = np.std(prices[-20:])  # 计算最近20个价格的标准差作为波动性
-        window = 10 if volatility > 0.02 else 20  # 动态调整窗口
-        return self.calculate_bollinger_bands(prices, window=window)
-
-    def calculate_rsi(self, prices, period=14):
-        """
-        计算RSI指标，返回一个包含所有RSI值的数组
-        """
-        try:
-            if len(prices) < period + 1:
-                return None
-                
-            # 计算价格变化
-            deltas = np.diff(prices)
-            
-            # 创建存储RSI值的数组
-            rsi_values = np.zeros(len(prices))
-            rsi_values[:period] = np.nan  # 前period个值设为NaN
-            
-            # 初始化第一个RSI值
-            gains = np.zeros(period)
-            losses = np.zeros(period)
-            for i in range(period):
-                if deltas[i] >= 0:
-                    gains[i] = deltas[i]
-                else:
-                    losses[i] = -deltas[i]
-                    
-            avg_gain = np.mean(gains)
-            avg_loss = np.mean(losses)
-            
-            if avg_loss == 0:
-                rsi_values[period] = 100
-            else:
-                rs = avg_gain / avg_loss
-                rsi_values[period] = 100 - (100 / (1 + rs))
-                
-            # 计算剩余的RSI值
-            for i in range(period + 1, len(prices)):
-                delta = deltas[i-1]
-                
-                if delta >= 0:
-                    avg_gain = (avg_gain * (period - 1) + delta) / period
-                    avg_loss = (avg_loss * (period - 1)) / period
-                else:
-                    avg_gain = (avg_gain * (period - 1)) / period
-                    avg_loss = (avg_loss * (period - 1) - delta) / period
-                    
-                if avg_loss == 0:
-                    rsi_values[i] = 100
-                else:
-                    rs = avg_gain / avg_loss
-                    rsi_values[i] = 100 - (100 / (1 + rs))
-            
-            return rsi_values
-            
-        except Exception as e:
-            print(f"计算RSI错误: {str(e)}")
-            return None
-
-    def calculate_dynamic_rsi(self, prices, base_period=14):
-        """根据市场波动性动态调整RSI阈值"""
-        volatility = np.std(prices[-20:])  # 计算最近20个价格的标准差作为波动性
-        overbought_threshold = 80 if volatility > 0.02 else 70
-        oversold_threshold = 20 if volatility > 0.02 else 30
-        
-        rsi = self.calculate_rsi(prices, period=base_period)
-        
-        return rsi, overbought_threshold, oversold_threshold
-
-    def calculate_macd(self, prices, fastperiod=12, slowperiod=26, signalperiod=9):
-        """计算MACD指标"""
-        exp1 = pd.Series(prices).ewm(span=fastperiod, adjust=False).mean()
-        exp2 = pd.Series(prices).ewm(span=slowperiod, adjust=False).mean()
-        macd = exp1 - exp2
-        signal = macd.ewm(span=signalperiod, adjust=False).mean()
-        hist = macd - signal
-        return macd.values, signal.values, hist.values
-
-    def calculate_obv(self, prices, volumes):
-        """计算OBV指标"""
-        obv = np.zeros_like(prices)
-        obv[0] = volumes[0]
-        for i in range(1, len(prices)):
-            if prices[i] > prices[i - 1]:
-                obv[i] = obv[i - 1] + volumes[i]
-            elif prices[i] < prices[i - 1]:
-                obv[i] = obv[i - 1] - volumes[i]
-            else:
-                obv[i] = obv[i - 1]
-        return obv[-1]
-
-    def check_candlestick_patterns(self, df):
-        """检查蜡烛图形态"""
-        try:
-            opens = df['open'].values
-            closes = df['close'].values
-            highs = df['high'].values
-            lows = df['low'].values
-            
-            # 检查锤子线
-            if self.is_hammer(opens, closes, highs, lows):
-                self.trigger_signal('检测到锤子线，可能反转', time.time())
-            
-            # 检查吞没形态
-            if self.is_engulfing(opens, closes):
-                self.trigger_signal('检测到吞没形态，可能反转', time.time())
-        
-        except Exception as e:
-            print(f"蜡烛图形态检查错误: {str(e)}")
-
-    def is_hammer(self, opens, closes, highs, lows, threshold=0.3):
-        """检测锤子线形态"""
-        if len(opens) < 2:
-            return False
-        
-        # 检查最后一个蜡烛
-        body = abs(closes[-1] - opens[-1])
-        lower_shadow = opens[-1] - lows[-1] if closes[-1] > opens[-1] else closes[-1] - lows[-1]
-        upper_shadow = highs[-1] - closes[-1] if closes[-1] > opens[-1] else highs[-1] - opens[-1]
-        
-        # 锤子线条件
-        if lower_shadow > 2 * body and upper_shadow < body * threshold:
-            return True
-        
-        return False
-
-    def is_engulfing(self, opens, closes):
-        """检测吞没形态"""
-        if len(opens) < 2:
-            return False
-        
-        # 检查最后两个蜡烛
-        prev_body = abs(closes[-2] - opens[-2])
-        curr_body = abs(closes[-1] - opens[-1])
-        
-        # 看涨吞没
-        if closes[-1] > opens[-1] and opens[-1] < closes[-2] and closes[-1] > opens[-2]:
-            return True
-        
-        # 看跌吞没
-        if closes[-1] < opens[-1] and opens[-1] > closes[-2] and closes[-1] < opens[-2]:
-            return True
-        
-        return False
 
     def prepare_data(self, df):
         """准备特征和标签,增加多维度时间特征和技术指标"""
@@ -2092,231 +1371,7 @@ class CryptoMonitor:
         # 这里可以从交易所API获取可用的交易对列表
         return ['BTC/USDT', 'ETH/USDT', 'XRP/USDT']  # 示例
 
-    def predict_best_entry_exit_multi_timeframe(self, symbol):
-        """
-        多时间维度预测最佳交易点位
-        结合短期、中期、长期走势分析
-        """
-        try:
-            # 定义时间框架组合
-            timeframes = {
-                'short': ['1m', '5m', '15m'],     # 短期
-                'medium': ['30m', '1h', '4h'],    # 中期
-                'long': ['4h', '1d', '1w']        # 长期
-            }
-            
-            # 存储各时间维度的分析结果
-            timeframe_analysis = {
-                'short': {'score': 0, 'signals': [], 'patterns': []},
-                'medium': {'score': 0, 'signals': [], 'patterns': []},
-                'long': {'score': 0, 'signals': [], 'patterns': []}
-            }
-            
-            # 对每个时间维度进行分析
-            for period, tf_list in timeframes.items():
-                for tf in tf_list:
-                    # 获取对应时间框架的数据
-                    df = self.data_fetcher.fetch_ohlcv_data(symbol, tf)
-                    if df is None or len(df) < 50:
-                        continue
-                    
-                    # 计算技术指标
-                    closes = df['close'].values
-                    volumes = df['volume'].values
-                    current_price = closes[-1]
-                    
-                    # RSI
-                    rsi = self.calculate_rsi(closes)
-                    
-                    # MACD
-                    macd, signal, hist = self.calculate_macd(closes)
-                    
-                    # 布林带
-                    ma, upper_band, lower_band = self.calculate_bollinger_bands(closes)
-                    
-                    # 成交量分析
-                    volume_ma = np.mean(volumes[-20:])
-                    current_volume = volumes[-1]
-                    
-                    # 趋势分析
-                    trend_score = 0
-                    if closes[-1] > ma[-1]:
-                        trend_score += 1
-                    if macd[-1] > signal[-1]:
-                        trend_score += 1
-                    if closes[-1] > upper_band[-1]:
-                        trend_score -= 1  # 超买区域
-                    elif closes[-1] < lower_band[-1]:
-                        trend_score += 1  # 超卖区域
-                    
-                    # 动量分析
-                    momentum_score = 0
-                    if 30 <= rsi[-1] <= 70:
-                        momentum_score += 1
-                    elif rsi[-1] < 30:
-                        momentum_score += 2  # 超卖
-                    elif rsi[-1] > 70:
-                        momentum_score -= 2  # 超买
-                    if len(hist) > 1:  # 确保有足够的数据
-                        if hist[-1] > 0 and hist[-1] > hist[-2]:
-                            momentum_score += 1  # MACD柱状图上升
-                        elif hist[-1] < 0 and hist[-1] < hist[-2]:
-                            momentum_score -= 1  # MACD柱状图下降
-                    else:
-                        print("MACD柱状图数据不足")
-                
-                    
-                    # 成交量分析
-                    volume_score = 0
-                    if current_volume > volume_ma * 1.5:
-                        volume_score += 1
-                    
-                    # 形态分析
-                    patterns = []
-                    if len(df) >= 100:  # 确保有足够的数据进行形态分析
-                        if self.is_head_and_shoulders_top(df['high'].values):
-                            patterns.append(('头肩顶', -2))
-                        if self.is_head_and_shoulders_bottom(df['low'].values):
-                            patterns.append(('头肩底', 2))
-                        if self.is_double_top(df['high'].values):
-                            patterns.append(('双顶', -2))
-                        if self.is_double_bottom(df['low'].values):
-                            patterns.append(('双底', 2))
-                    else:
-                        patterns.append(('形态分析不足', 0))
-                    
-                    # 计算总分
-                    pattern_score = sum(score for _, score in patterns)
-                    total_score = trend_score + momentum_score + volume_score + pattern_score
-                    
-                    # 更新时间维度分析结果
-                    timeframe_analysis[period]['score'] += total_score
-                    timeframe_analysis[period]['signals'].append({
-                        'timeframe': tf,
-                        'rsi': rsi[-1],
-                        'rsi_signal': 'overbought' if rsi[-1] > 70 else 'oversold' if rsi[-1] < 30 else 'neutral',
-                        'macd_signal': 'bullish' if macd[-1] > signal[-1] else 'bearish',
-                        'price_vs_ma': 'above' if closes[-1] > ma[-1] else 'below',
-                        'volume_signal': 'high' if current_volume > volume_ma * 1.5 else 'normal',
-                        'bollinger_position': 'above' if closes[-1] > upper_band[-1] else 'below' if closes[-1] < lower_band[-1] else 'inside'
-                    })
-                    timeframe_analysis[period]['patterns'].extend(patterns)
-            if current_price is None:
-                print("无法获取当前价格")
-                return None
-            # 综合分析结果
-            # prediction = {
-            #     'signal': '',
-            #     'confidence': 0,
-            #     'price_targets': {},
-            #     'reasons': [],
-            #     'risk_level': '',
-            #     'timeframe_analysis': timeframe_analysis
-            # }
-            
-            # 计算综合得分
-            total_score = (
-                timeframe_analysis['short']['score'] * 0.2 +  # 短期权重20%
-                timeframe_analysis['medium']['score'] * 0.5 + # 中期权重50%
-                timeframe_analysis['long']['score'] * 0.3     # 长期权重30%
-            )
-
-            # 生成预测结果
-            prediction = {
-                'signal': '',
-                'confidence': min(abs(total_score) * 10, 100),  # 限制最大值为100
-                'price_targets': {},
-                'reasons': [],
-                'risk_level': '',
-                'timeframe_analysis': timeframe_analysis
-            }
-            
-            # 获取当前价格
-            current_price = self.data_fetcher.get_current_price(symbol)
-            # print(total_score)
-            # 根据综合得分生成信号
-            if total_score > 3:
-                prediction['signal'] = '强烈看多'
-                prediction['price_targets'] = {
-                    'entry': current_price,
-                    'target': current_price * 1.03,  # 3%获利目标
-                    'stop_loss': current_price * 0.99  # 1%止损位
-                }
-            elif total_score > 1:
-                prediction['signal'] = '看多'
-                prediction['price_targets'] = {
-                    'entry': current_price,
-                    'target': current_price * 1.02,
-                    'stop_loss': current_price * 0.99
-                }
-            elif total_score < -3:
-                prediction['signal'] = '强烈看空'
-                prediction['price_targets'] = {
-                    'entry': current_price,
-                    'target': current_price * 0.97,
-                    'stop_loss': current_price * 1.01
-                }
-            elif total_score < -1:
-                prediction['signal'] = '看空'
-                prediction['price_targets'] = {
-                    'entry': current_price,
-                    'target': current_price * 0.98,
-                    'stop_loss': current_price * 1.01
-                }
-            else:
-                prediction['signal'] = '观望'
-                prediction['price_targets'] = {
-                    'entry': current_price,
-                    'target': current_price,
-                    'stop_loss': current_price
-                }
-            
-            # 设置信心水平
-            prediction['confidence'] = min(abs(total_score) * 10, 100)
-            
-            # 生成分析理由
-            for period, analysis in timeframe_analysis.items():
-                period_name = {'short': '短期', 'medium': '中期', 'long': '长期'}[period]
-                
-                for signal in analysis['signals']:
-                    # MACD信号
-                    if signal['macd_signal'] == 'bullish':
-                        prediction['reasons'].append(f"{period_name} {signal['timeframe']} MACD看多")
-                    elif signal['macd_signal'] == 'bearish':
-                        prediction['reasons'].append(f"{period_name} {signal['timeframe']} MACD看空")
-                
-                    # RSI信号
-                    if signal['rsi_signal'] == 'overbought':
-                        prediction['reasons'].append(f"{period_name} {signal['timeframe']} RSI超买({signal['rsi']:.1f})")
-                    elif signal['rsi_signal'] == 'oversold':
-                        prediction['reasons'].append(f"{period_name} {signal['timeframe']} RSI超卖({signal['rsi']:.1f})")
-                
-                    # 布林带信号
-                    if signal['bollinger_position'] == 'above':
-                        prediction['reasons'].append(f"{period_name} {signal['timeframe']} 价格突破布林带上轨")
-                    elif signal['bollinger_position'] == 'below':
-                        prediction['reasons'].append(f"{period_name} {signal['timeframe']} 价格跌破布林带下轨")
-            
-                    # 形态信号
-                for pattern, _ in analysis['patterns']:
-                    prediction['reasons'].append(f"{period_name}出现{pattern}形态")
-        
-            # 设置风险等级
-            if prediction['confidence'] >= 80:
-                prediction['risk_level'] = '低风险'
-            elif prediction['confidence'] >= 50:
-                prediction['risk_level'] = '中等风险'
-            else:
-                prediction['risk_level'] = '高风险'
-        
-            return prediction
     
-            
-        except Exception as e:
-            print(f"多时间维度预测错误: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return None
 
     def display_multi_timeframe_prediction(self, prediction):
         """显示多时间维度预测结果"""
