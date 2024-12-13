@@ -18,7 +18,9 @@ from sklearn.ensemble import RandomForestClassifier
 from tkinter import filedialog
 from tkcalendar import DateEntry
 import pickle
+from data_fetcher import DataFetcher
 from sklearn.model_selection import TimeSeriesSplit
+from ml_model import MLModel
 
 # 设置matplotlib的默认编码
 plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']  # 设置中文字体
@@ -105,8 +107,7 @@ class CryptoMonitor:
         self.start_date = tk.StringVar(value='2023-01-01')  # 默认开始日期
         self.end_date = tk.StringVar(value='2023-12-31')    # 默认结束日期
         
-        # 加载设置
-        self.load_settings()
+        
         
         # 现在可以安全地应用主题
         self.apply_theme()
@@ -116,14 +117,20 @@ class CryptoMonitor:
         
         # 加载配置
         self.config_file = 'config.json'
+        # 加载设置
+        self.load_config()
         self.load_config_without_display()
         
         # 更新信号显示
         self.update_signal_display()
-        
+        # 初始化数据获取器
+        self.data_fetcher = DataFetcher(exchange_name='binance', use_proxy=self.use_proxy.get(), proxy_host=self.proxy_host.get(), proxy_port=self.proxy_port.get())
+
+
         # 初始化数据
-        self.exchange = ccxt.binance()  # 例如，使用 Binance 交易所
-        self.load_model()
+        # self.exchange = ccxt.binance()  # 例如，使用 Binance 交易所
+        self.ml_model = MLModel(self.use_ml_model.get())
+        self.ml_model.load_model()
         
         # 添加醒目的按钮样式
         self.style.configure('Accent.TButton',
@@ -138,8 +145,6 @@ class CryptoMonitor:
         # 绑定窗口关闭事件
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
-        # 初始化随机森林模型
-        self.model = RandomForestClassifier(n_estimators=100, random_state=42)
         
     
     def load_config_without_display(self):
@@ -233,6 +238,10 @@ class CryptoMonitor:
         
         # 初始化主题
         self.current_theme.set(self.config.get('theme', 'VSCode'))
+
+        # 初始化机器学习模型配置
+        self.use_ml_model.set(self.config.get('use_ml_model', True))
+
         self.apply_theme()
         
         # 更新信号显示
@@ -266,17 +275,10 @@ class CryptoMonitor:
     def update_exchange(self):
         """更新交易所实例的代理设置"""
         try:
-            if self.exchange is not None:
-                if self.use_proxy.get():
-                    # 使用代理
-                    proxy = f'http://{self.proxy_host.get()}:{self.proxy_port.get()}'
-                    self.exchange.proxies = {
-                        'http': proxy,
-                        'https': proxy
-                    }
-                else:
-                    # 不使用代理
-                    self.exchange.proxies = None
+            if self.data_fetcher is not None:
+                # 使用代理
+                self.data_fetcher.update_exchange_proxy(self.use_proxy.get(),self.proxy_host.get(),self.proxy_port.get())
+                
             else:
                 print("交易所实例未初始化")
         except Exception as e:
@@ -557,13 +559,10 @@ class CryptoMonitor:
             
             if self.use_ml_model.get() and self.is_model_trained:
                 # 使用机器学习模型检查信号
-                predictions = self.predict_market_behavior(df)
-                if predictions is not None:
-                    for i, prediction in enumerate(predictions):
-                        if prediction == 1:
-                            self.trigger_signal('ML模型预测看涨信号', time.time())
-                        elif prediction == 0:
-                            self.trigger_signal('ML模型预测看跌信号', time.time())
+                predictions = self.ml_model.predict_market_behavior(df)
+                result = self.ml_model.determine_market_trend(predictions['predictions'], predictions['probabilities'])
+                print(f"预测结果: {predictions}")
+                self.trigger_signal(f'ML模型预测{result}信号', time.time())
             
             # 执行预测分析但只在满足阈值时显示
             prediction = self.predict_best_entry_exit_multi_timeframe(symbol)
@@ -768,6 +767,7 @@ class CryptoMonitor:
             # 结合信号评分建议买入或卖出金额
             trade_amount = self.trade_amount.get()
             message = f'{self.symbol_var.get()} {signal_name}！建议交易金额: {trade_amount} USDT'
+            print(message)
             # self.root.after(0, lambda: messagebox.showinfo('信号提醒', message))
     
     def update_signal_display(self):
@@ -868,23 +868,27 @@ class CryptoMonitor:
         if hasattr(self, 'last_df') and self.last_df is not None:
             self.update_chart(self.last_df)
 
-    def fetch_data(self):
+
+    
+    def start_monitoring(self):
+        """启动监控前先测试连接"""
+        if not self.running:
+            # 尝试连接交易所
+            if not self.data_fetcher.test_exchange_connection():
+                messagebox.showerror("错误", "先配置并试代理设置")
+                return
+            
+            self.running = True
+            self.start_btn.config(text='停止监控')
+            threading.Thread(target=self.fetch_data_monitor, daemon=True).start()
+        else:
+            self.stop_monitoring()
+
+    # 监控数据获取
+    def fetch_data_monitor(self):
         while self.running:
             try:
-                # 确保交易所实例使用最新的代理设置
-                self.update_exchange()
-                
-                # 取K线数据
-                ohlcv = self.exchange.fetch_ohlcv(
-                    self.symbol_var.get(),
-                    self.timeframe_var.get(),
-                    limit=100
-                )
-                
-                df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-                df.set_index('timestamp', inplace=True)
-                
+                df=self.data_fetcher.fetch_data(self.symbol_var.get(),self.timeframe_var.get())
                 # 更新当前价格显示
                 current_price = df['close'].iloc[-1]
                 self.root.after(0, lambda: self.price_label.config(text=f'{current_price:.2f} USDT'))
@@ -901,29 +905,14 @@ class CryptoMonitor:
                 
                 # 更新图表
                 self.root.after(0, lambda: self.update_chart(df))
-                
                 time.sleep(10)  # 每10秒更新一次
-                
+    
             except Exception as e:
                 print(f"错误: {str(e)}")
                 self.root.after(0, lambda: messagebox.showerror("错误", f"获取数据失败: {str(e)}\n请检查网络和代理设置"))
                 self.running = False
                 self.root.after(0, lambda: self.start_btn.config(text='启动监控'))
                 time.sleep(5)  # 出错后等待5秒重试
-    
-    def start_monitoring(self):
-        """启动监控前先测试连接"""
-        if not self.running:
-            # 尝试连接交易所
-            if not self.test_exchange_connection():
-                messagebox.showerror("错误", "先配置并试代理设置")
-                return
-            
-            self.running = True
-            self.start_btn.config(text='停止监控')
-            threading.Thread(target=self.fetch_data, daemon=True).start()
-        else:
-            self.stop_monitoring()
 
     def stop_monitoring(self):
         """停止监控"""
@@ -941,21 +930,9 @@ class CryptoMonitor:
             self.running = False
             self.save_config()  # 保存配置
             if hasattr(self, 'exchange'):
-                self.exchange = None
+                self.data_fetcher.release_exchange()
             print("程序已安全退出")
     
-    def test_exchange_connection(self):
-        """测试交易所连接"""
-        try:
-            # 更新代理设置
-            self.update_exchange()
-            
-            # 尝试获取服务器时间来测试连接
-            self.exchange.load_time_difference()
-            return True
-        except Exception as e:
-            print(f"连接测试失败: {str(e)}")
-            return False
 
     def save_proxy_settings(self):
         """保存并试代理设置"""
@@ -966,8 +943,9 @@ class CryptoMonitor:
             self.config['use_proxy'] = self.use_proxy.get()
             self.save_config()
             
+            self.data_fetcher.update_exchange_proxy(self.use_proxy.get(),self.proxy_host.get(),self.proxy_port.get())
             # 测试连接
-            if self.test_exchange_connection():
+            if self.data_fetcher.test_exchange_connection():
                 messagebox.showinfo('成功', '代理设置已保存并测试成功')
             else:
                 messagebox.showwarning('警告', '代理设置已保存，但连接测试失败\n请检查代理服务器是否正常运行')
@@ -1532,22 +1510,7 @@ class CryptoMonitor:
         except Exception as e:
             print(f"保存设置时出错：{str(e)}")
 
-    def load_settings(self):
-        """加载设置"""
-        try:
-            with open('config.json', 'r', encoding='utf-8') as f:  # 指定编码为utf-8
-                config = json.load(f)
-            
-            # 加载机器学习模型启用状态
-            self.use_ml_model.set(config.get('use_ml_model', True))
-            # 加载其他配置项...
-            
-            print("设置已加载")
-        
-        except FileNotFoundError:
-            print("配置文件未找到，使用默认设置")
-        except Exception as e:
-            print(f"加载设置时出错：{str(e)}")
+
 
     def show_signal_menu(self, event):
         """显示右键菜单"""
@@ -1584,7 +1547,7 @@ class CryptoMonitor:
                 
                 for tf in timeframes:
                     # 获取对应时间框架的数据
-                    df = self.fetch_ohlcv_data(symbol, tf)
+                    df = self.data_fetcher.fetch_ohlcv_data(symbol, tf)
                     if df is None or len(df) < 50:
                         continue
                     
@@ -1737,13 +1700,11 @@ class CryptoMonitor:
             
             if self.use_ml_model.get() and self.is_model_trained:
                 # 使用机器学习模型检查信号
-                predictions = self.predict_market_behavior(df)
-                if predictions is not None:
-                    for i, prediction in enumerate(predictions):
-                        if prediction == 1:
-                            self.trigger_signal('ML模型预测看涨信号', time.time())
-                        elif prediction == 0:
-                            self.trigger_signal('ML模型预测看跌信号', time.time())
+                predictions = self.ml_model.predict_market_behavior(df)
+                result = self.ml_model.determine_market_trend(predictions['predictions'], predictions['probabilities'])
+                print(f"预测结果: {predictions}")
+                self.trigger_signal(f'ML模型预测{result}信号', time.time())
+               
             
             # 执行预测分析但只在满足阈值时显示
             prediction = self.predict_best_entry_exit_multi_timeframe(symbol)
@@ -1784,46 +1745,7 @@ class CryptoMonitor:
             import traceback
             traceback.print_exc()
 
-    def fetch_ohlcv_data(self, symbol, timeframe, start_date=None, end_date=None):
-        """
-        获取K线数据并进行预处理
-        
-        Args:
-            symbol (str): 交易对
-            timeframe (str): 时间周期
-            start_date (str, optional): 开始日期，格式 'YYYY-MM-DD'
-            end_date (str, optional): 结束日期，格式 'YYYY-MM-DD'
-        """
-        try:
-            # 如果提供了日期范围，转换为时间戳
-            if start_date and end_date:
-                start_timestamp = int(pd.Timestamp(start_date).timestamp() * 1000)
-                end_timestamp = int(pd.Timestamp(end_date).timestamp() * 1000)
-                
-                # 获取指定日期范围的K线数据
-                ohlcv = self.exchange.fetch_ohlcv(
-                    symbol, 
-                    timeframe, 
-                    since=start_timestamp,
-                    limit=1000  # 增加限制以获取更多数据
-                )
-                
-                # 过滤结束日期
-                ohlcv = [candle for candle in ohlcv if candle[0] <= end_timestamp]
-            else:
-                # 如果没有提供日期范围，获取最近的数据
-                ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=100)
-            
-            # 创建DataFrame并设置正确的时间索引
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            df.set_index('timestamp', inplace=True)
-            
-            return df
-            
-        except Exception as e:
-            print(f"获取{timeframe}数据错误: {str(e)}")
-            return None
+    
 
     def check_indicators(self, df):
         """检查技术指标信号"""
@@ -1960,6 +1882,7 @@ class CryptoMonitor:
         oversold_threshold = 20 if volatility > 0.02 else 30
         
         rsi = self.calculate_rsi(prices, period=base_period)
+        
         return rsi, overbought_threshold, oversold_threshold
 
     def calculate_macd(self, prices, fastperiod=12, slowperiod=26, signalperiod=9):
@@ -2104,120 +2027,9 @@ class CryptoMonitor:
             print(f"准备数据错误: {str(e)}")
             return None
 
-    def train_model(self, df):
-        """使用交叉验证训练多个时间维度的模型"""
-        try:
-            # 准备数据
-            features = self.prepare_data(df)
-            if features is None:
-                return
-                
-            # 分离特征和标签
-            target_columns = [col for col in features.columns if col.startswith('target_')]
-            feature_columns = [col for col in features.columns if not col.startswith('target_')]
-            
-            X = features[feature_columns]
-            
-            # 对每个预测时间维度训练一个模型
-            self.models = {}
-            for target in target_columns:
-                y = features[target]
-                
-                # 创建模型
-                model = RandomForestClassifier(
-                    n_estimators=100,
-                    max_depth=10,
-                    min_samples_split=10,
-                    min_samples_leaf=5,
-                    random_state=42
-                )
-                
-                # 使用时间序列交叉验证
-                tscv = TimeSeriesSplit(n_splits=5)
-                scores = []
-                
-                for train_idx, val_idx in tscv.split(X):
-                    X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
-                    y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
-                    
-                    # 训练模型
-                    model.fit(X_train, y_train)
-                    
-                    # 评估模型
-                    score = model.score(X_val, y_val)
-                    scores.append(score)
-                
-                print(f"{target} 模型交叉验证得分: {np.mean(scores):.3f} ± {np.std(scores):.3f}")
-                
-                # 使用全部数据重新训练
-                model.fit(X, y)
-                self.models[target] = model
-            
-            self.is_model_trained = True
-            self.feature_columns = feature_columns
-            
-            # 保存模型
-            with open('models.pkl', 'wb') as f:
-                pickle.dump({
-                    'models': self.models,
-                    'feature_columns': self.feature_columns
-                }, f)
-                
-            print("模型训练完成")
-            
-        except Exception as e:
-            print(f"训练模型错误: {str(e)}")
+    
 
-    def predict_market_behavior(self, df):
-        """使用多个时间维度的模型进行预测"""
-        if not self.is_model_trained:
-            print("模型尚未训练")
-            return None
-            
-        try:
-            # 准备特征
-            features = self.prepare_data(df)
-            if features is None:
-                return None
-                
-            # 获取最新数据点的特征
-            latest_features = features[self.feature_columns].iloc[-1:]
-            
-            # 存储不同时间维度的预测结果
-            predictions = {}
-            probabilities = {}
-            
-            # 使用每个模型进行预测
-            for target, model in self.models.items():
-                pred = model.predict(latest_features)[0]
-                prob = model.predict_proba(latest_features)[0]
-                
-                predictions[target] = pred
-                probabilities[target] = prob
-            
-            return {
-                'predictions': predictions,
-                'probabilities': probabilities
-            }
-            
-        except Exception as e:
-            print(f"预测错误: {str(e)}")
-            return None
-
-    def fetch_and_save_historical_data(self, symbol, timeframe, since, filename):
-        """抓取并保存历史数据"""
-        try:
-            # 使用ccxt库从交易所获取数据
-            ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, since=since)
-            # 将数据转换为DataFrame
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            
-            # 保存数据到CSV文件
-            df.to_csv(filename, index=False)
-            print(f"数据已保存到 {filename}")
-        except Exception as e:
-            print(f"抓取历史数据错误: {str(e)}")
+    
 
     def load_historical_data(self, filename):
         """加载历史数据"""
@@ -2232,14 +2044,6 @@ class CryptoMonitor:
         except Exception as e:
             print(f"加载历史数据错误: {str(e)}")
             return None
-
-    def train_model_from_file(self, filename):
-        """从文件中加载数据并训练模型"""
-        df = self.load_historical_data(filename)
-        if df is not None:
-            self.train_model(df)
-        else:
-            print("无法加载数据进行训练")
 
     def show_training_window(self):
         """显示训练模型窗口"""
@@ -2275,24 +2079,13 @@ class CryptoMonitor:
         end_date = self.end_date.get()
         
         # 获取历史数据
-        df = self.fetch_ohlcv_data(self.symbol_var.get(), '1h', start_date, end_date)
+        df = self.data_fetcher.fetch_ohlcv_data(self.symbol_var.get(), '1h', start_date, end_date)
         print(len(df))
         if df is not None and len(df) > 50:
-            self.train_model(df)
+            self.ml_model.train_model(df)
         else:
             print("数据不足，无法训练模型")
 
-    def load_model(self):
-        """加载模型"""
-        try:
-            with open('models.pkl', 'rb') as f:
-                data = pickle.load(f)
-            self.models = data['models']
-            self.feature_columns = data['feature_columns']
-            self.is_model_trained = True
-            print("模型加载完成")
-        except FileNotFoundError:
-            print("模型文件未找到，请先训练模型")
 
     def get_available_symbols(self):
         """获取可用的交易对列表"""
@@ -2323,7 +2116,7 @@ class CryptoMonitor:
             for period, tf_list in timeframes.items():
                 for tf in tf_list:
                     # 获取对应时间框架的数据
-                    df = self.fetch_ohlcv_data(symbol, tf)
+                    df = self.data_fetcher.fetch_ohlcv_data(symbol, tf)
                     if df is None or len(df) < 50:
                         continue
                     
@@ -2439,8 +2232,8 @@ class CryptoMonitor:
             }
             
             # 获取当前价格
-            current_price = self.get_current_price(symbol)
-            
+            current_price = self.data_fetcher.get_current_price(symbol)
+            # print(total_score)
             # 根据综合得分生成信号
             if total_score > 3:
                 prediction['signal'] = '强烈看多'
@@ -2585,28 +2378,6 @@ class CryptoMonitor:
         for reason in prediction['reasons']:
             ttk.Label(reasons_frame, text=f"• {reason}").pack(anchor='w')
 
-    def get_current_price(self, symbol):
-        """
-        获取当前价格
-        """
-        try:
-            # 首先尝试从交易所获取最新价格
-            ticker = self.exchange.fetch_ticker(symbol)
-            if ticker and 'last' in ticker:
-                return ticker['last']
-            
-            # 如果无法直接获取最新价格，则从最近的K线数据中获取
-            df = self.fetch_ohlcv_data(symbol, '1m', limit=1)  # 获取最近1分钟的数据
-            if df is not None and not df.empty:
-                return df['close'].iloc[-1]
-                
-            # 如果都失败了，抛出异常
-            raise Exception("无法获取当前价格")
-            
-        except Exception as e:
-            print(f"获取当前价格错误: {str(e)}")
-            # 返回None或者抛出异常，这里选择返回None
-            return None
 
 
 if __name__ == '__main__':
