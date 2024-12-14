@@ -7,17 +7,25 @@ from sklearn.model_selection import TimeSeriesSplit
 import pickle
 from analyzers.technical_analyzer import TechnicalAnalyzer
 from analyzers.pattern_analyzer import PatternAnalyzer
-from analyzers.multi_timeframe_analyzer import MultiTimeframeAnalyzer
+from joblib import Parallel, delayed
 
 
 class MLModel:
-    def __init__(self, use_ml_model):
+    def __init__(self, use_ml_model,model_params=None,window_size=1000):
         self.models = {}
         self.feature_columns = []
         self.is_model_trained = False
         self.use_ml_model = use_ml_model
         self.te = TechnicalAnalyzer()
         self.pa = PatternAnalyzer()
+        self.model_params = model_params or {
+            'loss': 'log',  # 对应于逻辑回归
+            'max_iter': 1000,
+            'tol': 1e-3,
+            'random_state': 42
+        }
+        self.window_size = window_size
+
 
         # 初始化随机森林模型
         # self.model = RandomForestClassifier(n_estimators=100, random_state=42)
@@ -49,6 +57,8 @@ class MLModel:
             for window in [6, 14, 20]:
                 features[f'rsi_{window}'] = self.te.calculate_rsi(df['close'].values, period=window)
             
+            # results = Parallel(n_jobs=-1)(delayed(self.te.calculate_rsi)(df['close'], period) for period in [6, 14, 20])
+
             # 计算MACD
             macd, signal, hist = self.te.calculate_macd(df['close'].values)
             features['macd'] = macd
@@ -81,7 +91,7 @@ class MLModel:
             
             # 删除缺失值
             features = features.dropna()
-            
+            # print(features.describe())
             return features
             
         except Exception as e:
@@ -92,10 +102,14 @@ class MLModel:
         """使用交叉验证训练多个时间维度的模型"""
         try:
             # 准备数据
+            df.dropna(inplace=True)
+            df = df[df['close'] > 0]
             features = self.prepare_data(df)
             if features is None:
                 return
                 
+            # 仅使用滚动窗口内的数据
+            # features = features.iloc[-self.window_size:]
             # 分离特征和标签
             target_columns = [col for col in features.columns if col.startswith('target_')]
             feature_columns = [col for col in features.columns if not col.startswith('target_')]
@@ -109,10 +123,10 @@ class MLModel:
                 
                 # 创建模型
                 model = RandomForestClassifier(
-                    n_estimators=100,
-                    max_depth=10,
-                    min_samples_split=10,
-                    min_samples_leaf=5,
+                    n_estimators= 300,
+                    max_depth=20,
+                    min_samples_split=5,
+                    min_samples_leaf=3,
                     random_state=42
                 )
                 
@@ -168,9 +182,23 @@ class MLModel:
             # 获取最新数据点的特征
             latest_features = features[self.feature_columns].iloc[-1:]
             
+            # 并行预测
+            def predict_for_target(target, model):
+                pred = model.predict(latest_features)[0]
+                prob = model.predict_proba(latest_features)[0]
+                return target, pred, prob
+        
+            results = Parallel(n_jobs=-1)(
+                delayed(predict_for_target)(target, model) for target, model in self.models.items()
+            )
+
+
             # 存储不同时间维度的预测结果
             predictions = {}
             probabilities = {}
+            # 存储不同时间维度的预测结果
+            predictions = {target: pred for target, pred, prob in results}
+            probabilities = {target: prob for target, pred, prob in results}
             
             # 使用每个模型进行预测
             for target, model in self.models.items():

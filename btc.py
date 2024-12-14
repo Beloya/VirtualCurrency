@@ -550,7 +550,7 @@ class CryptoMonitor:
         """手动触发预测分析"""
         try:
             symbol = self.symbol_var.get()
-            prediction = self.predict_best_entry_exit_multi_timeframe(symbol)
+            prediction = self.multi_timeframe_analyzer.predict_best_entry_exit_multi_timeframe(symbol)
             if prediction:
                 self.display_multi_timeframe_prediction(prediction)
         except Exception as e:
@@ -574,7 +574,7 @@ class CryptoMonitor:
                 # 使用机器学习模型检查信号
                 predictions = self.ml_model.predict_market_behavior(df)
                 result = self.ml_model.determine_market_trend(predictions['predictions'], predictions['probabilities'])
-                print(f"预测结果: {predictions}")
+                # print(f"预测结果: {predictions}")
                 self.trigger_signal(f'ML模型预测{result}信号', time.time())
             
             # 执行预测分析但只在满足阈值时显示
@@ -1358,7 +1358,8 @@ class CryptoMonitor:
         end_date = self.end_date.get()
         
         # 获取历史数据
-        df = self.data_fetcher.fetch_ohlcv_data(self.symbol_var.get(), '1h', start_date, end_date)
+        df = self.data_fetcher.fetch_ohlcv_data(self.symbol_var.get(), self.timeframe_var.get(), start_date, end_date
+                                                ,data_limit=10000)
         print(len(df))
         if df is not None and len(df) > 50:
             self.ml_model.train_model(df)

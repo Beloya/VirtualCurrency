@@ -28,7 +28,7 @@ class DataFetcher:
         else:
             self.exchange.proxies = None
 
-    def fetch_ohlcv_data(self, symbol, timeframe, start_date=None, end_date=None):
+    def fetch_ohlcv_data(self, symbol, timeframe, start_date=None, end_date=None,data_limit=500):
         """
         获取K线数据并进行预处理
         
@@ -49,14 +49,14 @@ class DataFetcher:
                     symbol, 
                     timeframe, 
                     since=start_timestamp,
-                    limit=1000  # 增加限制以获取更多数据
+                    limit=data_limit  # 增加限制以获取更多数据
                 )
                 
                 # 过滤结束日期
                 ohlcv = [candle for candle in ohlcv if candle[0] <= end_timestamp]
             else:
                 # 如果没有提供日期范围，获取最近的数据
-                ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=100)
+                ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=data_limit)
             
             # 创建DataFrame并设置正确的时间索引
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -90,7 +90,7 @@ class DataFetcher:
         ohlcv = self.exchange.fetch_ohlcv(
             symbol,
             timeframe,
-            limit=100
+            limit=1000
         )
                 
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -110,7 +110,8 @@ class DataFetcher:
             # 将数据转换为DataFrame
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            
+            df.set_index('timestamp', inplace=True)
+
             # 保存数据到CSV文件
             df.to_csv(filename, index=False)
             print(f"数据已保存到 {filename}")
