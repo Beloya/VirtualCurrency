@@ -64,29 +64,31 @@ class PatternAnalyzer:
     def check_patterns(self, df):
         """检查经典技术形态"""
         try:
-            # 获取最近的价格数据
-            prices = df['close'].values
-            highs = df['high'].values
-            lows = df['low'].values
+            
             
             # 存储检测到的形态
             patterns = []
-            
+            analysis_patterns=[]
             # 头肩顶形态判断
             if (result:=self.is_head_and_shoulders_top(df))[0]:
                 patterns.append(f'头肩顶：bearish, 颈线: {result[1]}')
-            
+                analysis_patterns.append(('头肩顶', 'bearish'))
+
             # 头肩底形态判断
             elif (result:=self.is_head_and_shoulders_bottom(df))[0]:
                 patterns.append(f'头肩底：bullish, 颈线: {result[1]}')
-            
+                analysis_patterns.append(('头肩底', 'bullish'))
+
             # 双顶形态判断
             elif (result:=self.is_double_top(df))[0]:
                 patterns.append(f'双顶：bearish, 颈线: {result[1]}')
+                analysis_patterns.append(('双顶', 'bearish'))
             
+
             # 双底形态判断
             elif (result:=self.is_double_bottom(df))[0] :
                 patterns.append(f'双底：bullish, 颈线: {result[1]}')
+                analysis_patterns.append(('双底', 'bullish'))
 
             patterns.extend(self.check_candlestick_patterns(df))
             
@@ -96,14 +98,17 @@ class PatternAnalyzer:
                     resistance, (support_slope, support_intercept) = result
                     support_prices = support_slope * np.arange(len(df)) + support_intercept
                     patterns.append(f'上升三角形：bullish, 阻力线: {resistance}，支撑线: {support_prices}')
+                    analysis_patterns.append(('上升三角形', 'bullish'))
                 elif (result:=self.is_descending_triangle(df))[0]:
                     support, (resistance_slope, resistance_intercept) = result
                     resistance_prices = resistance_slope * np.arange(len(df)) + resistance_intercept
                     patterns.append(f'下降三角形：bearish, 支撑线: {support}，阻力线: {resistance_prices}')
+                    analysis_patterns.append(('下降三角形', 'bearish'))
                 elif (result:=self.detect_symmetrical_triangle(df))[0]:
                     patterns.append(f'对称三角形：bullish, 阻力线: {result[1]}，支撑线: {result[2]}')
+                    analysis_patterns.append(('对称三角形', 'bullish'))
             # print(patterns)
-            return patterns
+            return patterns,analysis_patterns
         except Exception as e:
             print(f"形态检查错误: {str(e)}")
 
@@ -284,14 +289,14 @@ class PatternAnalyzer:
         
         # 检查各种形态
         if (result:=self.is_head_and_shoulders_top(df))[0]:
-            patterns.append(f'头肩顶, 颈线: {result[1]}')
+            patterns.append(('头肩顶', 'bearish'))
         elif (result:=self.is_head_and_shoulders_bottom(df))[0]:
-            patterns.append(f'头肩底, 颈线: {result[1]}')
+            patterns.append(('头肩底', 'bullish'))
         elif (result:=self.is_double_top(df))[0]:
-            patterns.append(f'双顶, 颈线: {result[1]}')
+            patterns.append(('双顶', 'bearish'))
         elif ( result := self.is_double_bottom(df))[0]:
-            patterns.append(f'双底, 颈线: {result[1]}')
-        
+            patterns.append(('双底', 'bullish'))
+
         return patterns
 
 # 1. 通用的局部极值查找函数

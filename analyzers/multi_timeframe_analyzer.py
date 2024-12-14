@@ -103,7 +103,7 @@ class MultiTimeframeAnalyzer:
                     group_trends.append((tf, trend))
                     
                     # 分析形态
-                    pattern = self.pattern_analyzer.analyze_patterns(df)
+                    _,pattern = self.pattern_analyzer.check_patterns(df)
                     if pattern:
                         group_patterns.append((tf, pattern))
                 

@@ -8,6 +8,8 @@ import pickle
 from analyzers.technical_analyzer import TechnicalAnalyzer
 from analyzers.pattern_analyzer import PatternAnalyzer
 from joblib import Parallel, delayed
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
 
 
 class MLModel:
@@ -91,6 +93,9 @@ class MLModel:
             
             # 删除缺失值
             features = features.dropna()
+            # 检查并处理无穷大和超大值
+            features.replace([np.inf, -np.inf], np.nan, inplace=True)
+            features.dropna(inplace=True)
             # print(features.describe())
             return features
             
@@ -279,4 +284,68 @@ class MLModel:
         except Exception as e:
             print(f"市场趋势判断错误: {str(e)}")
             return "观望"
-        
+    
+    def evaluate_model(self, df):
+        """评估模型性能"""
+        if not self.is_model_trained:
+            print("模型尚未训练")
+            return None
+
+        try:
+            # 准备数据
+            features = self.prepare_data(df)
+            if features is None:
+                print("无法准备数据")
+                return None
+
+            # 分离特征和标签
+            target_columns = [col for col in features.columns if col.startswith('target_')]
+            feature_columns = [col for col in features.columns if not col.startswith('target_')]
+
+            X = features[feature_columns]
+
+            # 评估每个模型
+            evaluation_results = {}
+            for target in target_columns:
+                y = features[target]
+                model = self.models.get(target)
+
+                if model is None:
+                    print(f"模型 {target} 未找到")
+                    continue
+
+                # 使用时间序列交叉验证
+                tscv = TimeSeriesSplit(n_splits=5)
+                accuracies, precisions, recalls, f1s = [], [], [], []
+
+                for train_idx, val_idx in tscv.split(X):
+                    X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+                    y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
+                    # 预测
+                    y_pred = model.predict(X_val)
+
+                    # 计算评估指标
+                    accuracies.append(accuracy_score(y_val, y_pred))
+                    precisions.append(precision_score(y_val, y_pred))
+                    recalls.append(recall_score(y_val, y_pred))
+                    f1s.append(f1_score(y_val, y_pred))
+
+                evaluation_results[target] = {
+                    'accuracy': np.mean(accuracies),
+                    'precision': np.mean(precisions),
+                    'recall': np.mean(recalls),
+                    'f1_score': np.mean(f1s)
+                }
+
+            for target, metrics in evaluation_results.items():
+                print(f"{target} 模型评估结果:")
+                print(f"  准确率: {metrics['accuracy']:.3f}")
+                print(f"  精确率: {metrics['precision']:.3f}")
+                print(f"  召回率: {metrics['recall']:.3f}")
+                print(f"  F1 分数: {metrics['f1_score']:.3f}")
+            return evaluation_results
+
+        except Exception as e:
+            print(f"评估模型错误: {str(e)}")
+            return None
+                

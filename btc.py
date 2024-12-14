@@ -545,6 +545,9 @@ class CryptoMonitor:
         self.prediction_threshold.insert(0, '90')  # 默认阈值80%
         self.prediction_threshold.pack(side=tk.LEFT, padx=2)
         ttk.Label(threshold_frame, text='%').pack(side=tk.LEFT)
+
+        eval_button = ttk.Button(control_frame, text='评估模型', command=self.show_evaluation_window, style='Accent.TButton')
+        eval_button.pack(pady=5, padx=2, fill=tk.X)
     
     def manual_predict(self):
         """手动触发预测分析"""
@@ -609,13 +612,14 @@ class CryptoMonitor:
             
             # 使用其他方法检查信号
             signals=[]
-            tech_signals=self.pattern_analyzer.check_patterns(df)
+            tech_signals,analysis_patterns=self.pattern_analyzer.check_patterns(df)
             if tech_signals:
                 signals.extend(tech_signals)
             # signals.extend(self.technical_analyzer.check_indicators(df))
             tech_signals=self.technical_analyzer.check_technical_signals(df, self.ma_cross_alert.get(), self.bollinger_alert.get(), self.price_alert.get(), self.volume_alert.get(), self.trend_alert.get(), self.momentum_alert.get(), self.macd_cross_alert.get(),self.monitor_minutes.get(),self.price_threshold.get())
             if tech_signals:
                 signals.extend(tech_signals)
+            
             for i,signal in enumerate(signals):
                 self.trigger_signal(signal, time.time())
             # self.multi_timeframe_analyzer.analyze_trend(df)
@@ -798,39 +802,43 @@ class CryptoMonitor:
             
             self.running = True
             self.start_btn.config(text='停止监控')
-            threading.Thread(target=self.fetch_data_monitor, daemon=True).start()
+            threading.Thread(target=self.fetch_data_monitor, daemon=False).start()
         else:
             self.stop_monitoring()
 
     # 监控数据获取
     def fetch_data_monitor(self):
-        while self.running:
+        while True:
+            if not self.running:
+                time.sleep(5)
+                continue
             try:
                 df=self.data_fetcher.fetch_data(self.symbol_var.get(),self.timeframe_var.get())
                 # 更新当前价格显示
                 current_price = df['close'].iloc[-1]
-                self.root.after(0, lambda: self.price_label.config(text=f'{current_price:.2f} USDT'))
+                self.root.after(1000, lambda: self.price_label.config(text=f'{current_price:.2f} USDT'))
                 
                 # 计算指标
                 df = self.calculate_indicators(df)
                 self.calculate_strategy_scores(df)
                 
                 # 检查信号
-                self.root.after(0, lambda: self.check_signals(df))
+                self.check_signals(df)
                 
                 # 保存最新的数据用于图表更新
                 self.last_df = df
                 
                 # 更新图表
-                self.root.after(0, lambda: self.update_chart(df))
-                time.sleep(10)  # 每10秒更新一次
-    
+                self.root.after(1000, lambda: self.update_chart(df))
+                time.sleep(5)  # 每10秒更新一次
+                
+                # self.root.after(10000, self.fetch_data_monitor)
             except Exception as e:
                 print(f"错误: {str(e)}")
                 self.root.after(0, lambda: messagebox.showerror("错误", f"获取数据失败: {str(e)}\n请检查网络和代理设置"))
                 self.running = False
                 self.root.after(0, lambda: self.start_btn.config(text='启动监控'))
-                time.sleep(5)  # 出错后等待5秒重试
+                self.root.after(5000, self.fetch_data_monitor)
 
     def stop_monitoring(self):
         """停止监控"""
@@ -1434,6 +1442,42 @@ class CryptoMonitor:
         for reason in prediction['reasons']:
             ttk.Label(reasons_frame, text=f"• {reason}").pack(anchor='w')
 
+    def show_evaluation_window(self):
+        """显示模型评估结果窗口"""
+        if not self.ml_model.is_model_trained:
+            messagebox.showwarning("警告", "模型尚未训练，无法评估")
+            return
+
+        # 获取历史数据用于评估
+        start_date = self.start_date.get()
+        end_date = self.end_date.get()
+        df = self.data_fetcher.fetch_ohlcv_data(self.symbol_var.get(), self.timeframe_var.get(), start_date, end_date, data_limit=10000)
+
+        if df is not None and len(df) > 50:
+            evaluation_results = self.ml_model.evaluate_model(df)
+            if evaluation_results:
+                # 创建评估结果窗口
+                eval_window = tk.Toplevel(self.root)
+                eval_window.title('模型评估结果')
+                eval_window.geometry('400x400')
+                eval_window.configure(bg=self.colors['bg'])
+
+                # 显示评估结果
+                text = tk.Text(eval_window, wrap=tk.WORD, bg=self.colors['bg'], fg=self.colors['fg'], font=('Microsoft YaHei UI', 10))
+                text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+                for target, metrics in evaluation_results.items():
+                    text.insert(tk.END, f"{target} 模型评估结果:\n")
+                    text.insert(tk.END, f"  准确率: {metrics['accuracy']:.3f}\n")
+                    text.insert(tk.END, f"  精确率: {metrics['precision']:.3f}\n")
+                    text.insert(tk.END, f"  召回率: {metrics['recall']:.3f}\n")
+                    text.insert(tk.END, f"  F1 分数: {metrics['f1_score']:.3f}\n\n")
+
+                text.config(state='disabled')  # 设置为只读
+            else:
+                messagebox.showerror("错误", "评估模型失败")
+        else:
+            messagebox.showerror("错误", "数据不足，无法评估模型")
 
 
 if __name__ == '__main__':

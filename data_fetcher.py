@@ -28,7 +28,7 @@ class DataFetcher:
         else:
             self.exchange.proxies = None
 
-    def fetch_ohlcv_data(self, symbol, timeframe, start_date=None, end_date=None,data_limit=500):
+    def fetch_ohlcv_data(self, symbol, timeframe, start_date=None, end_date=None,data_limit=1000,page_limit=1000):
         """
         获取K线数据并进行预处理
         
@@ -39,27 +39,52 @@ class DataFetcher:
             end_date (str, optional): 结束日期，格式 'YYYY-MM-DD'
         """
         try:
+            all_ohlcv = []
+            since = None
+
             # 如果提供了日期范围，转换为时间戳
-            if start_date and end_date:
-                start_timestamp = int(pd.Timestamp(start_date).timestamp() * 1000)
+            if start_date:
+                since = int(pd.Timestamp(start_date).timestamp() * 1000)
+            if end_date:
                 end_timestamp = int(pd.Timestamp(end_date).timestamp() * 1000)
-                
-                # 获取指定日期范围的K线数据
+
+            fetch_limit = min(data_limit,page_limit)
+            left_num = data_limit
+            while True:
+                # 获取K线数据
                 ohlcv = self.exchange.fetch_ohlcv(
                     symbol, 
                     timeframe, 
-                    since=start_timestamp,
-                    limit=data_limit  # 增加限制以获取更多数据
+                    since=since,
+                    limit=fetch_limit  # 每次获取1000条数据
                 )
-                
-                # 过滤结束日期
-                ohlcv = [candle for candle in ohlcv if candle[0] <= end_timestamp]
-            else:
-                # 如果没有提供日期范围，获取最近的数据
-                ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=data_limit)
-            
+                left_num-=fetch_limit
+                fetch_limit = min(page_limit,left_num)
+                if not ohlcv:
+                    break
+
+                all_ohlcv.extend(ohlcv)
+
+                # 更新since为最后一条数据的时间戳
+                since = ohlcv[-1][0] + 1
+
+                # 如果提供了结束日期，检查是否超出范围
+                if end_date and ohlcv[-1][0] > end_timestamp:
+                    break
+
+                # 如果获取的数据量已经超过data_limit，停止获取
+                if left_num<=0:
+                    break
+
+                # 暂停一段时间以避免请求过于频繁
+                time.sleep(self.exchange.rateLimit / 1000)
+
+            # 过滤结束日期
+            if end_date:
+                all_ohlcv = [candle for candle in all_ohlcv if candle[0] <= end_timestamp]
+
             # 创建DataFrame并设置正确的时间索引
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df = pd.DataFrame(all_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             df.set_index('timestamp', inplace=True)
             
