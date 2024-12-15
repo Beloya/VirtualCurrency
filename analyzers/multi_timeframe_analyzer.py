@@ -320,14 +320,14 @@ class MultiTimeframeAnalyzer:
                     'target': current_price * 1.02,
                     'stop_loss': current_price * 0.99
                 }
-            elif total_score < 0:
+            elif total_score < -2:
                 prediction['signal'] = '强烈看空'
                 prediction['price_targets'] = {
                     'entry': current_price,
                     'target': current_price * 0.97,
                     'stop_loss': current_price * 1.01
                 }
-            elif total_score < 3:
+            elif total_score < 1:
                 prediction['signal'] = '看空'
                 prediction['price_targets'] = {
                     'entry': current_price,

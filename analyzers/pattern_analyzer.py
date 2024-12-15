@@ -239,6 +239,21 @@ class PatternAnalyzer:
             return True
         
         return False
+    def is_hanging_man(self, opens, closes, highs, lows, threshold=0.3):
+        """检测上吊线形态"""
+        if len(opens) < 2:
+            return False
+        
+        # 检查最后一个蜡烛
+        body = abs(closes[-1] - opens[-1])
+        lower_shadow = opens[-1] - lows[-1] if closes[-1] > opens[-1] else closes[-1] - lows[-1]
+        upper_shadow = highs[-1] - closes[-1] if closes[-1] > opens[-1] else highs[-1] - opens[-1]
+        
+        # 上吊线条件
+        if lower_shadow > 2 * body and upper_shadow < body * threshold:
+            return True
+        
+        return False
 
     def is_engulfing(self, opens, closes):
         """检测吞没形态"""
@@ -276,6 +291,10 @@ class PatternAnalyzer:
             # 检查吞没形态
             if self.is_engulfing(opens, closes):
                 trigger_signals.append('检测到吞没形态，可能反转')
+
+            # 检查上吊线
+            if self.is_hanging_man(opens, closes, highs, lows):
+                trigger_signals.append('检测到上吊线，可能反转')
             return trigger_signals
         except Exception as e:
             print(f"蜡烛图形态检查错误: {str(e)}")
