@@ -306,28 +306,28 @@ class MultiTimeframeAnalyzer:
             current_price = self.data_fetcher.get_current_price(symbol)
             # print(total_score)
             # 根据综合得分生成信号
-            if total_score > 8:
+            if total_score > 5:
                 prediction['signal'] = '强烈看多'
                 prediction['price_targets'] = {
                     'entry': current_price,
                     'target': current_price * 1.03,  # 3%获利目标
                     'stop_loss': current_price * 0.99  # 1%止损位
                 }
-            elif total_score > 6:
+            elif total_score > 2:
                 prediction['signal'] = '看多'
                 prediction['price_targets'] = {
                     'entry': current_price,
                     'target': current_price * 1.02,
                     'stop_loss': current_price * 0.99
                 }
-            elif total_score < -2:
+            elif total_score < -3:
                 prediction['signal'] = '强烈看空'
                 prediction['price_targets'] = {
                     'entry': current_price,
                     'target': current_price * 0.97,
                     'stop_loss': current_price * 1.01
                 }
-            elif total_score < 1:
+            elif total_score < 0:
                 prediction['signal'] = '看空'
                 prediction['price_targets'] = {
                     'entry': current_price,

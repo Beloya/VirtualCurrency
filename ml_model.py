@@ -9,11 +9,15 @@ from analyzers.technical_analyzer import TechnicalAnalyzer
 from analyzers.pattern_analyzer import PatternAnalyzer
 from joblib import Parallel, delayed
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+import matplotlib.pyplot as plt
+from analyzers.multi_timeframe_analyzer import MultiTimeframeAnalyzer
+
+
 
 
 
 class MLModel:
-    def __init__(self, use_ml_model,model_params=None,window_size=1000):
+    def __init__(self, use_ml_model,model_params=None,data_fetcher=None,window_size=1000):
         self.models = {}
         self.feature_columns = []
         self.is_model_trained = False
@@ -27,6 +31,7 @@ class MLModel:
             'random_state': 42
         }
         self.window_size = window_size
+        self.multi_timeframe_analyzer = MultiTimeframeAnalyzer(data_fetcher)
 
 
         # 初始化随机森林模型
@@ -69,7 +74,7 @@ class MLModel:
             
             # 计算布林带
             for window in [20, 50]:
-                ma, upper, lower = self.te.calculate_bollinger_bands(df['close'].values, window=window)
+                ma, upper, lower = self.te.calculate_dynamic_bollinger_bands(df['close'].values)
                 features[f'bb_upper_{window}'] = upper
                 features[f'bb_lower_{window}'] = lower
                 features[f'bb_width_{window}'] = (upper - lower) / ma
@@ -85,6 +90,32 @@ class MLModel:
             # 计算波动率
             for window in [5, 10, 20]:
                 features[f'volatility_{window}'] = df['close'].rolling(window).std()
+
+            # 成交量特征
+            for window in [5, 10, 20]:
+                # 成交量变化率
+                features[f'volume_change_{window}'] = df['volume'].pct_change(window)
+                # 成交量移动平均
+                features[f'volume_ma_{window}'] = df['volume'].rolling(window=window).mean()
+        
+            # 成交量震荡指标
+            short_window = 5
+            long_window = 20
+            features['volume_oscillator'] = features[f'volume_ma_{short_window}'] - features[f'volume_ma_{long_window}']
+            
+            # 成交量加权平均价格 (VWAP)
+            features['vwap'] = (df['close'] * df['volume']).cumsum() / df['volume'].cumsum()
+
+            # 使用 MultiTimeframeAnalyzer 分析趋势
+            trend = self.multi_timeframe_analyzer.analyze_trend(df)
+            if trend:
+                direction_map = {'bullish': 1, 'bearish': -1, 'neutral': 0}
+                features['trend_direction'] = direction_map.get(trend['direction'], 0)
+                features['price_vs_ma'] = direction_map.get(trend['price_vs_ma'], 0)
+                features['rsi_status'] = direction_map.get(trend['rsi_status'], 0)
+                features['macd_status'] = direction_map.get(trend['macd_status'], 0)
+                features['trend_strength'] = trend['strength']
+
             
             # 标签: 未来n个周期的价格变动方向
             for period in [1, 3, 6, 12]:  # 1h, 3h, 6h, 12h
@@ -96,6 +127,9 @@ class MLModel:
             # 检查并处理无穷大和超大值
             features.replace([np.inf, -np.inf], np.nan, inplace=True)
             features.dropna(inplace=True)
+
+            # 标准化特征
+            # features = (features - features.mean()) / features.std()
             # print(features.describe())
             return features
             
@@ -154,6 +188,7 @@ class MLModel:
                 
                 # 使用全部数据重新训练
                 model.fit(X, y)
+
 
                 self.models[target] = model
             
@@ -352,4 +387,72 @@ class MLModel:
         except Exception as e:
             print(f"评估模型错误: {str(e)}")
             return None
+        
+    def backtest_model(self, df, initial_balance=10000, trade_amount=2000):
+        """使用历史数据进行回溯测试"""
+        if not self.is_model_trained:
+            print("模型尚未训练")
+            return None
+
+        try:
+            # 准备数据
+            features = self.prepare_data(df)
+            if features is None:
+                print("无法准备数据")
+                return None
+
+            # 初始化回溯测试参数
+            balance = initial_balance
+            positions = 0
+            trade_log = []
+
+            # 遍历数据进行回溯测试
+            window_size = 200 # 例如，使用10个数据点的窗口
+            for i in range(window_size, len(features) - 1):
+                current_features = features.iloc[i-window_size:i]
+                next_close_price = df['close'].iloc[i+1]
+
+                # print(f"当前时间: {df.index[i]}, 当前价格: {next_close_price}")
+                # 获取模型预测
+                predictions = self.predict_market_behavior(current_features)
+                if predictions is None:
+                    continue
+
+                # 综合分析市场趋势
+                market_trend = self.determine_market_trend(
+                    predictions['predictions'],
+                    predictions['probabilities'],
+                    market_volatility=0  # 假设市场波动率为0
+                )
+                # 根据市场趋势进行交易
+                if market_trend == "看多" and balance >= trade_amount:
+                    # 买入
+                    positions += trade_amount / next_close_price
+                    balance -= trade_amount
+                    trade_log.append(f"买入: {trade_amount} at {next_close_price}")
+
+                elif market_trend == "看空" and positions > 0:
+                    # 卖出
+                    balance += positions * next_close_price
+                    trade_log.append(f"卖出: {positions} at {next_close_price}")
+                    positions = 0
+                # elif market_trend == "观望" and positions > 0:
+                #     # 观望行情卖出
+                #     balance += positions * next_close_price
+                #     trade_log.append(f"观望行情卖出: {positions} at {next_close_price}")
+                #     positions = 0
                 
+                print(f"当前时间: {df.index[i]}, 当前余额: {balance}, 当前持仓: {positions}, 当前价格: {next_close_price}")
+
+            # 计算最终余额
+            final_balance = balance + positions * df['close'].iloc[-1]
+            print(f"初始余额: {initial_balance}, 最终余额: {final_balance}")
+            print("交易记录:")
+            for log in trade_log:
+                print(log)
+
+            return final_balance
+
+        except Exception as e:
+            print(f"回溯测试错误: {str(e)}")
+            return None
