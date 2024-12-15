@@ -1,7 +1,7 @@
 import numpy as np
 import time
-from analyzers.pattern_analyzer import PatternAnalyzer
-from analyzers.technical_analyzer import TechnicalAnalyzer
+from .pattern_analyzer import PatternAnalyzer
+from .technical_analyzer import TechnicalAnalyzer
 
 class MultiTimeframeAnalyzer:
     def __init__(self, data_fetcher):
@@ -142,17 +142,22 @@ class MultiTimeframeAnalyzer:
                     avg_strength = sum(trend_strengths) / len(trend_strengths)
                     signal = f"{timeframe_group}时间框架趋势一致看跌 (强度: {avg_strength:.1f})"
                     signals.append((signal, current_time))
+                elif all(d == 'neutral' for d in trend_directions):
+                    avg_strength = sum(trend_strengths) / len(trend_strengths)
+                    signal = f"{timeframe_group}时间框架趋势中性 (强度: {avg_strength:.1f})"
+                    signals.append((signal, current_time))
             
             # 检查形态确认
             group_patterns = patterns[timeframe_group]
             if group_patterns:
-                pattern_directions = [p[1] for tf, plist in group_patterns for p in plist]
+                patterns_list = [p for tf, plist in group_patterns for p in plist]
+                pattern_directions = [p[1] for p in patterns_list]
                 if len(pattern_directions) >= 2:
                     if all(d == 'bullish' for d in pattern_directions):
-                        signal = f"{timeframe_group}时间框架形态确认看涨"
+                        signal = f"{timeframe_group}时间框架形态确认看涨:{patterns_list}"
                         signals.append((signal, current_time))
                     elif all(d == 'bearish' for d in pattern_directions):
-                        signal = f"{timeframe_group}时间框架形态确认看跌"
+                        signal = f"{timeframe_group}时间框架形态确认看跌:{patterns_list}"
                         signals.append((signal, current_time))
         
         return signals
@@ -301,28 +306,28 @@ class MultiTimeframeAnalyzer:
             current_price = self.data_fetcher.get_current_price(symbol)
             # print(total_score)
             # 根据综合得分生成信号
-            if total_score > 3:
+            if total_score > 8:
                 prediction['signal'] = '强烈看多'
                 prediction['price_targets'] = {
                     'entry': current_price,
                     'target': current_price * 1.03,  # 3%获利目标
                     'stop_loss': current_price * 0.99  # 1%止损位
                 }
-            elif total_score > 1:
+            elif total_score > 6:
                 prediction['signal'] = '看多'
                 prediction['price_targets'] = {
                     'entry': current_price,
                     'target': current_price * 1.02,
                     'stop_loss': current_price * 0.99
                 }
-            elif total_score < -3:
+            elif total_score < 0:
                 prediction['signal'] = '强烈看空'
                 prediction['price_targets'] = {
                     'entry': current_price,
                     'target': current_price * 0.97,
                     'stop_loss': current_price * 1.01
                 }
-            elif total_score < -1:
+            elif total_score < 3:
                 prediction['signal'] = '看空'
                 prediction['price_targets'] = {
                     'entry': current_price,

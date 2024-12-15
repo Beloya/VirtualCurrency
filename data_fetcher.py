@@ -4,6 +4,8 @@ import ccxt
 import pandas as pd
 import time
 from tkinter import ttk, messagebox
+import numpy as np
+
 
 
 class DataFetcher:
@@ -170,4 +172,21 @@ class DataFetcher:
         """释放交易所实例"""
         self.exchange = None
         # self.update_exchange_proxy(False, '127.0.0.1', '1080')
+
+    def calculate_market_volatility(self, prices, window=20):
+        """
+        计算市场波动性，使用对数收益率的标准差。
+        
+        :param prices: pd.Series, 价格数据
+        :param window: int, 计算波动性的时间窗口
+        :return: float, 市场波动性
+        """
+        # 计算对数收益率
+        log_returns = np.log(prices / prices.shift(1))
+        
+        # 计算对数收益率的标准差
+        volatility = log_returns.rolling(window=window).std().iloc[-1]
+        
+        # 将波动性转换为百分比
+        return volatility * 100
 

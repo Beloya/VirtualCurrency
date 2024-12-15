@@ -129,9 +129,9 @@ class MLModel:
                 # 创建模型
                 model = RandomForestClassifier(
                     n_estimators= 300,
-                    max_depth=20,
-                    min_samples_split=5,
-                    min_samples_leaf=3,
+                    max_depth=10,
+                    min_samples_split=2,
+                    min_samples_leaf=1,
                     random_state=42
                 )
                 
@@ -154,6 +154,7 @@ class MLModel:
                 
                 # 使用全部数据重新训练
                 model.fit(X, y)
+
                 self.models[target] = model
             
             self.is_model_trained = True
@@ -234,14 +235,14 @@ class MLModel:
             print("模型加载完成")
         except FileNotFoundError:
             print("模型文件未找到，请先训练模型")
-    def determine_market_trend(self, predictions, probabilities, confidence_threshold=0.7):
+    def determine_market_trend(self, predictions, probabilities,market_volatility, base_confidence_threshold=0.7):
         """综合分析市场趋势，结合多模型和时间维度"""
         try:
             # 定义时间维度权重
             weights = {
-                'short': 0.2,  # 短期权重
+                'short': 0.3,  # 短期权重
                 'medium': 0.3,  # 中期权重
-                'long': 0.5   # 长期权重
+                'long': 0.4   # 长期权重
             }
             weights_dict = {
                 'target_1h': "short",  # 短期权重
@@ -250,6 +251,9 @@ class MLModel:
                 'target_12h': "long"
             }
             
+            # 动态调整置信度阈值
+            confidence_threshold = base_confidence_threshold + (market_volatility / 100)
+            # print(f"置信度阈值: {confidence_threshold}")
             # 初始化分数
             bullish_score = 0
             bearish_score = 0

@@ -69,7 +69,7 @@ class CryptoMonitor:
         self.fig, self.ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
         
         # 初始化交易对和时间周期
-        self.symbols = ['BTC/USDT', 'ETH/USDT']
+        self.symbols = ['BTC/USDT', 'ETH/USDT', 'DOGE/USDT']
         self.timeframes = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']
         
         # 初始化变量
@@ -107,9 +107,8 @@ class CryptoMonitor:
         self.running = False
         self.recent_signals = []
         self.use_ml_model = tk.BooleanVar(value=False)  # 默认启用机器学习模型
-        self.start_date = tk.StringVar(value='2023-01-01')  # 默认开始日期
-        self.end_date = tk.StringVar(value='2023-12-31')    # 默认结束日期
-        
+        self.start_date = tk.StringVar(value='2024-09-01')  # 默认开始日期
+        self.end_date = tk.StringVar(value=time.strftime('%Y-%m-%d', time.localtime(time.time())))    # 默认结束日期
         
         
         # 现在可以安全地应用主题
@@ -576,9 +575,13 @@ class CryptoMonitor:
             if self.use_ml_model.get() and self.ml_model.is_model_trained:
                 # 使用机器学习模型检查信号
                 predictions = self.ml_model.predict_market_behavior(df)
-                result = self.ml_model.determine_market_trend(predictions['predictions'], predictions['probabilities'])
+
+                market_volatility = self.data_fetcher.calculate_market_volatility(df['close'])
+
+                result = self.ml_model.determine_market_trend(predictions['predictions'], predictions['probabilities'],market_volatility)
                 # print(f"预测结果: {predictions}")
                 self.trigger_signal(f'ML模型预测{result}信号', time.time())
+                print(f'ML模型预测{predictions}信号')
             
             # 执行预测分析但只在满足阈值时显示
             prediction = self.multi_timeframe_analyzer.predict_best_entry_exit_multi_timeframe(symbol)
@@ -1451,7 +1454,9 @@ class CryptoMonitor:
         # 获取历史数据用于评估
         start_date = self.start_date.get()
         end_date = self.end_date.get()
-        df = self.data_fetcher.fetch_ohlcv_data(self.symbol_var.get(), self.timeframe_var.get(), start_date, end_date, data_limit=10000)
+        print(start_date,end_date)
+        df = self.data_fetcher.fetch_ohlcv_data(symbol=self.symbol_var.get(), timeframe=self.timeframe_var.get()
+                                                , start_date=start_date, data_limit=10000)
 
         if df is not None and len(df) > 50:
             evaluation_results = self.ml_model.evaluate_model(df)

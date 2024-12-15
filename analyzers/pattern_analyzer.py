@@ -95,12 +95,12 @@ class PatternAnalyzer:
             # 三角形形态判断（只在没有发现其他形态时检查）
             if not patterns:
                 if (result:=self.is_ascending_triangle(df))[0]:
-                    resistance, (support_slope, support_intercept) = result
+                    _,resistance, (support_slope, support_intercept) = result
                     support_prices = support_slope * np.arange(len(df)) + support_intercept
                     patterns.append(f'上升三角形：bullish, 阻力线: {resistance}，支撑线: {support_prices}')
                     analysis_patterns.append(('上升三角形', 'bullish'))
                 elif (result:=self.is_descending_triangle(df))[0]:
-                    support, (resistance_slope, resistance_intercept) = result
+                    _,support, (resistance_slope, resistance_intercept) = result
                     resistance_prices = resistance_slope * np.arange(len(df)) + resistance_intercept
                     patterns.append(f'下降三角形：bearish, 支撑线: {support}，阻力线: {resistance_prices}')
                     analysis_patterns.append(('下降三角形', 'bearish'))

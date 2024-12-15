@@ -202,7 +202,7 @@ class TechnicalAnalyzer:
     def calculate_support_resistance(self, df):
         """计算支撑位和压力位"""
         # 使用过去N个周期的数据
-        window = 20
+        window = 100
         recent_df = df.tail(window)
         
         # 计算价格密集区
