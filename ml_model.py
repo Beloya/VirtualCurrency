@@ -11,6 +11,7 @@ from joblib import Parallel, delayed
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 import matplotlib.pyplot as plt
 from analyzers.multi_timeframe_analyzer import MultiTimeframeAnalyzer
+from analyzers.technical_analyzer import TechnicalAnalyzer
 
 
 
@@ -32,6 +33,7 @@ class MLModel:
         }
         self.window_size = window_size
         self.multi_timeframe_analyzer = MultiTimeframeAnalyzer(data_fetcher)
+        self.technical_analyzer = TechnicalAnalyzer()
 
 
         # 初始化随机森林模型
@@ -50,10 +52,13 @@ class MLModel:
             features['low'] = df['low']
             features['volume'] = df['volume']
             
+
+
             # 计算不同时间窗口的价格变化率
             for window in [5, 10, 20, 30]:
                 features[f'price_change_{window}'] = df['close'].pct_change(window)
                 features[f'volume_change_{window}'] = df['volume'].pct_change(window)
+                # features[f'trend_score_{window}'] = df.rolling(window).apply(lambda x: self.calculate_score(x), raw=False)
             
             # 计算移动平均
             for window in [5, 10, 20, 50]:
@@ -79,9 +84,6 @@ class MLModel:
                 features[f'bb_lower_{window}'] = lower
                 features[f'bb_width_{window}'] = (upper - lower) / ma
             
-            # 计算OBV
-            features['obv'] = self.te.calculate_obv(df['close'].values, df['volume'].values)
-            
             # 添加时间特征
             features['hour'] = df.index.hour
             features['day_of_week'] = df.index.dayofweek
@@ -106,15 +108,9 @@ class MLModel:
             # 成交量加权平均价格 (VWAP)
             features['vwap'] = (df['close'] * df['volume']).cumsum() / df['volume'].cumsum()
 
-            # 使用 MultiTimeframeAnalyzer 分析趋势
-            trend = self.multi_timeframe_analyzer.analyze_trend(df)
-            if trend:
-                direction_map = {'bullish': 1, 'bearish': -1, 'neutral': 0}
-                features['trend_direction'] = direction_map.get(trend['direction'], 0)
-                features['price_vs_ma'] = direction_map.get(trend['price_vs_ma'], 0)
-                features['rsi_status'] = direction_map.get(trend['rsi_status'], 0)
-                features['macd_status'] = direction_map.get(trend['macd_status'], 0)
-                features['trend_strength'] = trend['strength']
+
+            # 计算技术指标分数
+            features['technical_score'] = self.calculate_score(df)
 
             
             # 标签: 未来n个周期的价格变动方向
@@ -123,10 +119,11 @@ class MLModel:
                 features[f'target_{period}h'] = labels
             
             # 删除缺失值
-            features = features.dropna()
             # 检查并处理无穷大和超大值
             features.replace([np.inf, -np.inf], np.nan, inplace=True)
-            features.dropna(inplace=True)
+            features = features.dropna()
+            
+            # features.dropna(inplace=True)
 
             # 标准化特征
             # features = (features - features.mean()) / features.std()
@@ -430,17 +427,20 @@ class MLModel:
                     positions += trade_amount / next_close_price
                     balance -= trade_amount
                     trade_log.append(f"买入: {trade_amount} at {next_close_price}")
+                    
 
                 elif market_trend == "看空" and positions > 0:
                     # 卖出
                     balance += positions * next_close_price
                     trade_log.append(f"卖出: {positions} at {next_close_price}")
                     positions = 0
-                # elif market_trend == "观望" and positions > 0:
-                #     # 观望行情卖出
-                #     balance += positions * next_close_price
-                #     trade_log.append(f"观望行情卖出: {positions} at {next_close_price}")
-                #     positions = 0
+                    
+                elif market_trend == "观望" and positions > 0:
+                     # 卖出
+                    balance += positions * next_close_price
+                    trade_log.append(f"卖出: {positions} at {next_close_price}")
+                    positions = 0
+                    # positions = 0
                 
                 print(f"当前时间: {df.index[i]}, 当前余额: {balance}, 当前持仓: {positions}, 当前价格: {next_close_price}")
 
@@ -456,3 +456,75 @@ class MLModel:
         except Exception as e:
             print(f"回溯测试错误: {str(e)}")
             return None
+        
+    def calculate_score(self,df):
+        # 计算技术指标
+        closes = df['close'].values
+        volumes = df['volume'].values
+        # current_price = closes[-1]
+                    
+        # RSI
+        rsi = self.technical_analyzer.calculate_rsi(closes)
+                    
+        # MACD
+        macd, signal, hist = self.technical_analyzer.calculate_macd(closes)
+                    
+        # 布林带
+        ma, upper_band, lower_band = self.technical_analyzer.calculate_bollinger_bands(closes)
+                    
+        # 成交量分析
+        volume_ma = np.mean(volumes[-20:])
+        current_volume = volumes[-1]
+                    
+        # 趋势分析
+        trend_score = 0
+        if closes[-1] > ma[-1]:
+            trend_score += 1
+        if macd[-1] > signal[-1]:
+            trend_score += 1
+        if closes[-1] > upper_band[-1]:
+            trend_score -= 1  # 超买区域
+        elif closes[-1] < lower_band[-1]:
+            trend_score += 1  # 超卖区域
+                    
+        # 动量分析
+        momentum_score = 0
+        if 30 <= rsi[-1] <= 70:
+            momentum_score += 1
+        elif rsi[-1] < 30:
+            momentum_score += 2  # 超卖
+        elif rsi[-1] > 70:
+            momentum_score -= 2  # 超买
+        if len(hist) > 1:  # 确保有足够的数据
+            if hist[-1] > 0 and hist[-1] > hist[-2]:
+                momentum_score += 1  # MACD柱状图上升
+            elif hist[-1] < 0 and hist[-1] < hist[-2]:
+                momentum_score -= 1  # MACD柱状图下降
+        else:
+            print("MACD柱状图数据不足")
+                
+                    
+        # 成交量分析
+        volume_score = 0
+        if current_volume > volume_ma * 1.5:
+            volume_score += 1
+                    
+        # 形态分析
+        patterns = []
+        if len(df) >= 100:  # 确保有足够的数据进行形态分析
+            if (result:=self.multi_timeframe_analyzer.pattern_analyzer.is_head_and_shoulders_top(df))[0]:
+                patterns.append(('头肩顶', -2))
+            if (result:=self.multi_timeframe_analyzer.pattern_analyzer.is_head_and_shoulders_bottom(df))[0]:
+                patterns.append(('头肩底', 2))
+            if (result:=self.multi_timeframe_analyzer.pattern_analyzer.is_double_top(df))[0]:
+                patterns.append(('双顶', -2))
+            if (result:=self.multi_timeframe_analyzer.pattern_analyzer.is_double_bottom(df))[0]:
+                patterns.append(('双底', 2))
+        else:
+            patterns.append(('形态分析不足', 0))
+                    
+        # 计算总分
+        pattern_score = sum(score for _, score in patterns)
+        total_score = trend_score + momentum_score + volume_score + pattern_score
+        return total_score
+
