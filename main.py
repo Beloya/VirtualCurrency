@@ -1302,8 +1302,9 @@ class CryptoMonitor:
         end_date = self.end_date.get()
         
         # 获取历史数据
-        df = self.data_fetcher.fetch_ohlcv_data(self.symbol_var.get(), self.timeframe_var.get(), start_date, end_date
-                                                ,data_limit=10000)
+        df = self.data_fetcher.fetch_and_save_historical_data(self.symbol_var.get(), self.timeframe_var.get()
+                                                              , start_date, end_date,filename="historical_data.csv"
+                                                            ,data_limit=10000)
         print(len(df))
         if df is not None and len(df) > 50:
             self.ml_model.train_model(df)

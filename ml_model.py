@@ -421,8 +421,9 @@ class MLModel:
                     predictions['probabilities'],
                     market_volatility=0  # 假设市场波动率为0
                 )
+                rsi=self.te.calculate_rsi(current_features['close'].values)[-1]
                 # 根据市场趋势进行交易
-                if market_trend == "看多" and balance >= trade_amount:
+                if market_trend == "看多"  and balance >= trade_amount:
                     # 买入
                     positions += trade_amount / next_close_price
                     balance -= trade_amount

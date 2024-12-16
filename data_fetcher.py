@@ -129,19 +129,16 @@ class DataFetcher:
                 
                 
             
-    def fetch_and_save_historical_data(self, symbol, timeframe, since,end_date, filename):
+    def fetch_and_save_historical_data(self, symbol, timeframe, start_date,end_date, filename,data_limit=10000):
         """抓取并保存历史数据"""
         try:
             # 使用ccxt库从交易所获取数据
-            ohlcv = self.fetch_ohlcv_data(symbol=symbol, timeframe=timeframe, since=since,end_date=end_date)
-            # 将数据转换为DataFrame
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            df.set_index('timestamp', inplace=True)
+            df = self.fetch_ohlcv_data(symbol=symbol, timeframe=timeframe, start_date=start_date,end_date=end_date,data_limit=data_limit)
 
             # 保存数据到CSV文件
             df.to_csv(filename, index=False)
             print(f"数据已保存到 {filename}")
+            return df
         except Exception as e:
             print(f"抓取历史数据错误: {str(e)}")
     
