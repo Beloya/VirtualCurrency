@@ -401,7 +401,7 @@ class MLModel:
             # 初始化回溯测试参数
             balance = initial_balance
             positions = 0
-            trade_log = []
+            # trade_log = []
 
             # 遍历数据进行回溯测试
             window_size = 200 # 例如，使用10个数据点的窗口
@@ -422,26 +422,41 @@ class MLModel:
                     market_volatility=0  # 假设市场波动率为0
                 )
                 rsi=self.te.calculate_rsi(current_features['close'].values)[-1]
+                current_volume = current_features['volume'].iloc[-1]
+
                 # 根据市场趋势进行交易
-                if market_trend == "看多"  and balance >= trade_amount:
+                if market_trend == "看多" and balance >= trade_amount:
                     # 买入
                     positions += trade_amount / next_close_price
                     balance -= trade_amount
-                    trade_log.append(f"买入: {trade_amount} at {next_close_price}")
+                    # trade_log.append(f"买入: {trade_amount} at {next_close_price}")
                     
 
                 elif market_trend == "看空" and positions > 0:
                     # 卖出
                     balance += positions * next_close_price
-                    trade_log.append(f"卖出: {positions} at {next_close_price}")
+                    # trade_log.append(f"卖出: {positions} at {next_close_price}")
                     positions = 0
                     
-                elif market_trend == "观望" and positions > 0:
-                     # 卖出
-                    balance += positions * next_close_price
-                    trade_log.append(f"卖出: {positions} at {next_close_price}")
-                    positions = 0
+                elif market_trend == "观望" and rsi<50 and current_volume>=8000 and balance >= trade_amount:
+                     # 买入
+                    buy=trade_amount
+                    positions += trade_amount / next_close_price
+                    balance -= trade_amount
+                    # trade_log.append(f"买入: {trade_amount} at {next_close_price}")
                     # positions = 0
+                elif market_trend == "观望" and rsi>=55 and positions > 0:
+                     # 卖出
+                    sell=positions
+                    all_sell=False
+                    if(sell<=0.1):
+                        sell=positions
+                        all_sell=True
+                    balance += sell * next_close_price
+                    # trade_log.append(f"卖出: {sell} at {next_close_price}")
+                    positions -= sell
+                    if(all_sell):
+                        positions = 0
                 
                 print(f"当前时间: {df.index[i]}, 当前余额: {balance}, 当前持仓: {positions}, 当前价格: {next_close_price}")
 
@@ -449,8 +464,8 @@ class MLModel:
             final_balance = balance + positions * df['close'].iloc[-1]
             print(f"初始余额: {initial_balance}, 最终余额: {final_balance}")
             print("交易记录:")
-            for log in trade_log:
-                print(log)
+            # for log in trade_log:
+            #     print(log)
 
             return final_balance
 

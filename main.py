@@ -119,11 +119,13 @@ class CryptoMonitor:
         
         # 加载配置
         self.config_file = 'config.json'
+        self.log_file = 'log.txt'
         # 加载设置
         self.load_config()
         self.load_config_without_display()
         
         # 更新信号显示
+        self.load_log()
         self.update_signal_display()
         # 初始化数据获取器
         self.data_fetcher = DataFetcher(exchange_name='binance', use_proxy=self.use_proxy.get(), proxy_host=self.proxy_host.get(), proxy_port=self.proxy_port.get())
@@ -206,6 +208,18 @@ class CryptoMonitor:
         self.update_signal_display()
         self.trade_amount.set(self.config.get('trade_amount', 100.0))
     
+    def load_log(self):
+        self.log = {}
+        """从文件加载日志"""
+        if os.path.exists(self.log_file):
+            with open(self.log_file, 'r', encoding='utf-8') as f:
+                self.log = json.load(f)
+            self.recent_signals = self.log
+        
+        
+        
+            
+
     def load_config(self):
         """从文件加载配置"""
         self.config = {
@@ -244,7 +258,7 @@ class CryptoMonitor:
         
         # 加载信号设置
         self.max_signals.set(self.config.get('max_signals', 100))
-        self.recent_signals = self.config.get('recent_signals', [])
+        
         
         # 初始化主题
         self.current_theme.set(self.config.get('theme', 'VSCode'))
@@ -274,7 +288,7 @@ class CryptoMonitor:
             'symbol': self.symbol_var.get(),
             'timeframe': self.timeframe_var.get(),
             'max_signals': self.max_signals.get(),
-            'recent_signals': self.recent_signals,
+            
             'theme': self.current_theme.get(),
             'trade_amount': self.trade_amount.get(),  # 保存交易金额
             'prediction_threshold': self.prediction_threshold.get(),  # 保存预测阈值
@@ -283,6 +297,13 @@ class CryptoMonitor:
         })
         with open(self.config_file, 'w', encoding='utf-8') as f:
             json.dump(self.config, f, ensure_ascii=False)
+
+
+    def save_log(self):
+        """保存日志到文件"""
+        self.log= self.recent_signals
+        with open(self.log_file, 'w', encoding='utf-8') as f:
+            json.dump(self.log, f, ensure_ascii=False)
     
     def update_exchange(self):
         """更新交易所实例的代理设置"""
@@ -858,6 +879,7 @@ class CryptoMonitor:
         finally:
             self.running = False
             self.save_config()  # 保存配置
+            self.save_log()  # 保存日志
             if hasattr(self, 'exchange'):
                 self.data_fetcher.release_exchange()
             print("程序已安全退出")
@@ -888,9 +910,11 @@ class CryptoMonitor:
                 self.running = False
                 time.sleep(1)  # 给线程一点时间来结束
                 self.save_config()  # 保存配置
+                self.save_log()  # 保存日志
                 self.root.destroy()
         else:
             self.save_config()  # 保存配置
+            self.save_log()  # 保存日志
             self.root.destroy()
 
     def calculate_strategy_scores(self, df):
@@ -1248,7 +1272,7 @@ class CryptoMonitor:
         """清空最近信号"""
         self.recent_signals.clear()
         self.update_signal_display()
-        self.save_config()  # 保存配置以更新信号记录
+        self.save_log()  # 保存配置以更新信号记录
 
     
 
